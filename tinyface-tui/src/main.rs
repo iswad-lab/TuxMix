@@ -106,7 +106,7 @@ fn ui(f: &mut Frame, device: &BabyfacePro) {
         Span::styled("q", Style::default().fg(Color::Yellow)),
         Span::raw(" to quit"),
     ]))
-    .block(Block::default().borders(Borders::ALL).title("tinyface"));
+    .block(Block::default().borders(Borders::ALL).title("Tinyface"));
     f.render_widget(header, chunks[0]);
 
     // ── Channel overview ───────────────────────────────────────

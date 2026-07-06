@@ -2,7 +2,7 @@
 name = "tinyface-gui"
 version = "0.1.0"
 edition = "2021"
-description = "GUI for tinyface — a TotalMix replacement for RME interfaces on Linux"
+description = "GUI for Tinyface — a TotalMix replacement for RME interfaces on Linux"
 
 [dependencies]
 tinyface-core = { path = "../tinyface-core" }

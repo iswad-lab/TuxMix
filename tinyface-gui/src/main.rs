@@ -22,12 +22,12 @@ fn main() -> Result<(), eframe::Error> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([960.0, 640.0])
-            .with_title("tinyface — RME Mixer"),
+            .with_title("Tinyface — RME Mixer"),
         ..Default::default()
     };
 
     eframe::run_native(
-        "tinyface",
+        "Tinyface",
         options,
         Box::new(|_cc| Ok(Box::new(TinyFaceApp::new(device)))),
     )
@@ -58,7 +58,7 @@ impl eframe::App for TinyFaceApp {
         // ── Top panel ──────────────────────────────────────────
         egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.heading("🎛  tinyface");
+                ui.heading("🎛  Tinyface");
                 match &self.device {
                     Some(d) => {
                         ui.label(format!(" — {} ", d.model_name()));

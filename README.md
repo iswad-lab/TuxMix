@@ -1,8 +1,8 @@
-# 🎛 tinyface
+# 🎛 Tinyface
 
 > An open-source TotalMix replacement for RME audio interfaces on Linux.
 
-**tinyface** gives you full control over your RME interface's hardware mixer
+**Tinyface** gives you full control over your RME interface's hardware mixer
 directly from Linux — no TotalMix, no Windows, no macOS required.
 
 ## Status
@@ -28,7 +28,7 @@ is being laid out.
 ## Architecture
 
 ```
-tinyface/
+Tinyface/
 ├── tinyface-core/     ← Hardware-agnostic RME control library (Rust + ALSA)
 ├── tinyface-tui/      ← Terminal UI (ratatui) — great for SSH / scripts
 └── tinyface-gui/      ← Desktop GUI (egui) — TotalMix-like experience
@@ -37,7 +37,7 @@ tinyface/
 ## Building
 
 ```bash
-cd tinyface
+cd Tinyface
 cargo build --release
 ```
 

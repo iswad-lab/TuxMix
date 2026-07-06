@@ -2,7 +2,7 @@
 name = "tinyface-tui"
 version = "0.1.0"
 edition = "2021"
-description = "TUI for tinyface — control your RME interface from the terminal"
+description = "TUI for Tinyface — control your RME interface from the terminal"
 
 [dependencies]
 tinyface-core = { path = "../tinyface-core" }
