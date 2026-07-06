@@ -1,0 +1,45 @@
+# Maintainer: iswad-lab <iswad@lab.dev>
+# Contributor: iswad-lab <iswad@lab.dev>
+
+pkgname=tinyface-git
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="TotalMix replacement for RME audio interfaces on Linux"
+arch=('x86_64')
+url="https://github.com/iswad-lab/Tinyface"
+license=('GPL3')
+depends=(
+    'alsa-lib'
+    'libgl'
+)
+makedepends=(
+    'cargo'
+    'git'
+)
+provides=("${pkgname%-git}")
+conflicts=("${pkgname%-git}")
+source=("git+https://github.com/iswad-lab/Tinyface.git")
+sha256sums=('SKIP')
+
+pkgver() {
+    cd "${srcdir}/Tinyface"
+    git describe --long --tags --always 2>/dev/null | sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g' || echo "${pkgver}"
+}
+
+build() {
+    cd "${srcdir}/Tinyface"
+    export CARGO_TARGET_DIR="${srcdir}/target"
+    cargo build --release --workspace
+}
+
+package() {
+    cd "${srcdir}/Tinyface"
+
+    install -Dm755 "target/release/tinyface-gui" \
+        "${pkgdir}/usr/bin/tinyface"
+    install -Dm755 "target/release/tinyface-tui" \
+        "${pkgdir}/usr/bin/tinyface-tui"
+
+    install -Dm644 "README.md" \
+        "${pkgdir}/usr/share/doc/tinyface/README.md"
+}
