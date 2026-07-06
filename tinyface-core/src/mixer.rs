@@ -1,0 +1,76 @@
+use alsa::mixer::{Mixer, Selem, SelemId};
+use alsa::Ctl;
+use log::{debug, info};
+
+use crate::error::Error;
+
+/// Wraps an ALSA mixer handle and provides device discovery helpers.
+pub struct AlsaMixer {
+    mixer: Mixer,
+    card_name: String,
+}
+
+impl AlsaMixer {
+    /// Scan all ALSA cards and open the mixer for the first one whose
+    /// long name contains the given `card_substring`.
+    pub fn open_by_card_name(card_substring: &str) -> Result<Self, Error> {
+        for card_idx in 0..32 {
+            let card_name = format!("hw:{}", card_idx);
+
+            // Try to open the CTL interface for this card
+            let ctl = match Ctl::new(&card_name, false) {
+                Err(_) => continue,
+                Ok(c) => c,
+            };
+
+            let info = match ctl.card_info() {
+                Err(_) => continue,
+                Ok(i) => i,
+            };
+
+            let name = info.get_name().unwrap_or_default().to_string();
+            debug!("Found ALSA card: {} — {}", card_name, name);
+
+            if name.contains(card_substring) {
+                info!("Detected target device: {} ({})", name, card_name);
+                let mixer = Mixer::new(&card_name, false)?;
+                let _ = mixer.find_selem(&SelemId::new("", 0));
+                return Ok(Self { mixer, card_name });
+            }
+        }
+
+        Err(Error::DeviceNotFound {
+            model: card_substring.to_string(),
+        })
+    }
+
+    /// Find a mixer element by name.
+    pub fn find_selem(&self, name: &str, index: u32) -> Option<Selem<'_>> {
+        let id = SelemId::new(name, index);
+        self.mixer.find_selem(&id)
+    }
+
+    /// Iterate over all simple mixer elements, yielding (name, Selem) pairs.
+    pub fn iter_selems(&self) -> Vec<(String, Selem<'_>)> {
+        let mut elems = Vec::new();
+        for elem in self.mixer.iter() {
+            if let Some(selem) = Selem::new(elem) {
+                let id = selem.get_id();
+                if let Ok(name) = id.get_name() {
+                    elems.push((name.to_string(), selem));
+                }
+            }
+        }
+        elems
+    }
+
+    /// Handle pending ALSA events.
+    pub fn handle_events(&self) -> Result<u32, Error> {
+        Ok(0)
+    }
+
+    /// Name of the ALSA card (e.g. "hw:0").
+    pub fn card_name(&self) -> &str {
+        &self.card_name
+    }
+}

@@ -1,0 +1,7 @@
+[workspace]
+resolver = "2"
+members = [
+    "tinyface-core",
+    "tinyface-tui",
+    "tinyface-gui",
+]

@@ -1,0 +1,12 @@
+[package]
+name = "tinyface-gui"
+version = "0.1.0"
+edition = "2021"
+description = "GUI for tinyface — a TotalMix replacement for RME interfaces on Linux"
+
+[dependencies]
+tinyface-core = { path = "../tinyface-core" }
+egui = "0.30"
+eframe = { version = "0.30", features = ["default"] }
+log = "0.4"
+env_logger = "0.11"
