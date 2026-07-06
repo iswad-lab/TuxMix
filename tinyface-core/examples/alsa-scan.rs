@@ -1,4 +1,4 @@
-//! ALSA device & mixer scanner.
+//! ALSA device and mixer scanner.
 //!
 //! Lists all ALSA cards and their simple mixer elements with
 //! current values. Essential for discovering the exact control
@@ -6,7 +6,7 @@
 //!
 //! Usage:
 //!     cargo run --example alsa-scan
-//!     cargo run --example alsa-scan -- Babyface   # filter cards by name
+//!     cargo run --example alsa-scan Babyface   # filter cards by name
 
 use alsa::mixer::{Selem, SelemChannelId};
 use alsa::Ctl;
@@ -62,16 +62,16 @@ fn list_cards() -> Vec<(i32, String)> {
 fn main() {
     let filter = env::args().nth(1);
 
-    println!("🔍 ALSA Card Scanner");
+    println!("ALSA Card Scanner");
     println!(
-        "   Filter: {}",
+        "  Filter: {}",
         filter.as_deref().unwrap_or("(none — showing all)")
     );
     println!();
 
     let cards = list_cards();
     if cards.is_empty() {
-        eprintln!("⚠  No ALSA cards found.");
+        eprintln!("No ALSA cards found.");
         return;
     }
 
@@ -99,15 +99,13 @@ fn main() {
             (String::new(), String::new())
         };
 
-        println!("╔══════════════════════════════════════════════════");
-        println!("║  Card #{}    {}", card_idx, desc);
+        println!("--- Card #{}  {} ---", card_idx, desc);
         if !longname.is_empty() {
-            println!("║    Longname: {}", longname);
+            println!("    longname: {}", longname);
         }
         if !driver.is_empty() {
-            println!("║    Driver:   {}", driver);
+            println!("    driver:   {}", driver);
         }
-        println!("╚══════════════════════════════════════════════════");
         println!();
 
         scan_mixer(&card_name);
@@ -118,7 +116,7 @@ fn main() {
 fn scan_mixer(card: &str) {
     let mixer = match alsa::mixer::Mixer::new(card, false) {
         Err(e) => {
-            println!("   ⚠  No simple mixer interface: {}", e);
+            println!("    no simple mixer interface: {}", e);
             return;
         }
         Ok(m) => m,
@@ -136,16 +134,16 @@ fn scan_mixer(card: &str) {
     }
 
     if count == 0 {
-        println!("   (no simple mixer elements)");
+        println!("    (no simple mixer elements)");
     } else {
-        println!("   ── {} element(s) total ──", count);
+        println!("    -- {} element(s) total --", count);
     }
 }
 
 fn print_element(selem: &Selem, name: &str) {
     let mono = SelemChannelId::mono();
 
-    // ── Try to read as playback volume ──
+    // Try to read as playback volume
     if selem.has_playback_volume() {
         let range = selem.get_playback_volume_range();
         if let Ok(vol) = selem.get_playback_volume(mono) {
@@ -155,18 +153,18 @@ fn print_element(selem: &Selem, name: &str) {
                 0.0
             };
             println!(
-                "   🔊  {:<30}  vol={:<6}  range=[{}-{}]  {:.0}%",
+                "    VOL  {:<30}  value={:<6}  range=[{}-{}]  {:.0}%",
                 name, vol, range.0, range.1, pct
             );
             return;
         }
     }
 
-    // ── Try to read as playback switch ──
+    // Try to read as playback switch
     if selem.has_playback_switch() {
         if let Ok(v) = selem.get_playback_switch(mono) {
             println!(
-                "   🔘  {:<30}  switch={}",
+                "    SW   {:<30}  {}",
                 name,
                 if v != 0 { "ON" } else { "OFF" }
             );
@@ -174,20 +172,23 @@ fn print_element(selem: &Selem, name: &str) {
         }
     }
 
-    // ── Try to read as enum ──
+    // Try to read as enum
     if let Ok(item) = selem.get_enum_item(mono) {
         if let Ok(count) = selem.get_enum_items() {
             if count > 0 {
-                println!("   📋  {:<30}  enum[{}]  ({} items)", name, item, count);
+                println!(
+                    "    ENUM {:<30}  selected={}  ({} items)",
+                    name, item, count
+                );
             } else {
-                println!("   📋  {:<30}  enum[{}]", name, item);
+                println!("    ENUM {:<30}  selected={}", name, item);
             }
         } else {
-            println!("   📋  {:<30}  enum[{}]", name, item);
+            println!("    ENUM {:<30}  selected={}", name, item);
         }
         return;
     }
 
-    // ─️ Fallback (e.g. capture volume, LED controls) ──
-    println!("   ❓  {:<30}  (unhandled type)", name);
+    // Fallback
+    println!("    ???  {:<30}  (unhandled type)", name);
 }

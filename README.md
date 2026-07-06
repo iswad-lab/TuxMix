@@ -1,17 +1,15 @@
-# 🎛 Tinyface
+# Tinyface
 
-> An open-source TotalMix replacement for RME audio interfaces on Linux.
+An open-source TotalMix replacement for RME audio interfaces on Linux.
 
-**Tinyface** gives you full control over your RME interface's hardware mixer
+Tinyface gives you full control over your RME interface's hardware mixer
 directly from Linux — no TotalMix, no Windows, no macOS required.
 
 ## Status
 
 **Pre-alpha / Work in progress.**
 
-The project is currently in early development. The author is waiting for
-their Babyface Pro FS to arrive. In the meantime, the core architecture
-is being laid out.
+The project is currently in early development.
 
 ### Roadmap
 
@@ -29,9 +27,9 @@ is being laid out.
 
 ```
 Tinyface/
-├── tinyface-core/     ← Hardware-agnostic RME control library (Rust + ALSA)
-├── tinyface-tui/      ← Terminal UI (ratatui) — great for SSH / scripts
-└── tinyface-gui/      ← Desktop GUI (egui) — TotalMix-like experience
+├── tinyface-core/     Hardware-agnostic RME control library (Rust + ALSA)
+├── tinyface-tui/      Terminal UI (ratatui) — great for SSH / scripts
+└── tinyface-gui/      Desktop GUI (egui) — TotalMix-like experience
 ```
 
 ## Building
@@ -55,11 +53,11 @@ cargo run -p tinyface-gui
 
 | Model | Status |
 |---|---|
-| Babyface Pro FS | 🚧 In progress |
-| Babyface Pro | ⏳ Planned |
-| Fireface UCX II | ⏳ Planned |
-| Fireface UFX+ | ⏳ Planned |
-| MADIface Pro | ⏳ Planned |
+| Babyface Pro FS | In progress |
+| Babyface Pro | Planned |
+| Fireface UCX II | Planned |
+| Fireface UFX+ | Planned |
+| MADIface Pro | Planned |
 
 ## License
 

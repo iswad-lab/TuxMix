@@ -13,7 +13,7 @@ use crossterm::{
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout},
-    style::{Color, Modifier, Style, Stylize},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
     Frame, Terminal,
@@ -28,13 +28,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut device = match BabyfacePro::open() {
         Ok(d) => d,
         Err(e) => {
-            eprintln!("❌ Could not open Babyface Pro: {}", e);
-            eprintln!("   Make sure the device is plugged in and recognized by ALSA.");
+            eprintln!("Could not open Babyface Pro: {}", e);
+            eprintln!("Make sure the device is plugged in and recognized by ALSA.");
             return Ok(());
         }
     };
 
-    println!("✅ {} detected on {}", device.model_name(), "ALSA");
+    println!("{} detected on ALSA", device.model_name());
 
     // ── Terminal setup ─────────────────────────────────────────
     enable_raw_mode()?;
@@ -73,7 +73,6 @@ fn run(
                 if key.kind == KeyEventKind::Press {
                     match key.code {
                         KeyCode::Char('q') | KeyCode::Esc => break,
-                        // Navigation / control will go here later
                         _ => {}
                     }
                 }
@@ -89,24 +88,21 @@ fn ui(f: &mut Frame, device: &BabyfacePro) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3), // header
-            Constraint::Min(10),   // channels
-            Constraint::Length(3), // footer
+            Constraint::Length(3),
+            Constraint::Min(10),
+            Constraint::Length(3),
         ])
         .split(area);
 
     // ── Header ─────────────────────────────────────────────────
     let header = Paragraph::new(Line::from(vec![
-        Span::raw("🎛  ").bold(),
-        Span::styled(
-            device.model_name(),
-            Style::default().add_modifier(Modifier::BOLD),
-        ),
-        Span::raw("  —  Press "),
+        Span::styled("Tinyface", Style::default().add_modifier(Modifier::BOLD)),
+        Span::raw(format!(" — {}  ", device.model_name())),
+        Span::raw("Press "),
         Span::styled("q", Style::default().fg(Color::Yellow)),
         Span::raw(" to quit"),
     ]))
-    .block(Block::default().borders(Borders::ALL).title("Tinyface"));
+    .block(Block::default().borders(Borders::ALL));
     f.render_widget(header, chunks[0]);
 
     // ── Channel overview ───────────────────────────────────────
@@ -122,7 +118,7 @@ fn ui(f: &mut Frame, device: &BabyfacePro) {
     f.render_widget(body, chunks[1]);
 
     // ── Footer ─────────────────────────────────────────────────
-    let footer = Paragraph::new("ℹ  Device ready. Full TUI coming soon.")
+    let footer = Paragraph::new("Device ready. Full TUI coming soon.")
         .block(Block::default().borders(Borders::TOP));
     f.render_widget(footer, chunks[2]);
 }

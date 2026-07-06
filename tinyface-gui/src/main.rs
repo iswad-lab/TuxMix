@@ -13,8 +13,8 @@ fn main() -> Result<(), eframe::Error> {
     let device = match BabyfacePro::open() {
         Ok(d) => Some(d),
         Err(e) => {
-            eprintln!("⚠  Could not open device: {}", e);
-            eprintln!("   The UI will run in offline mode.");
+            eprintln!("Could not open device: {}", e);
+            eprintln!("The UI will run in offline mode.");
             None
         }
     };
@@ -58,14 +58,14 @@ impl eframe::App for TinyFaceApp {
         // ── Top panel ──────────────────────────────────────────
         egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.heading("🎛  Tinyface");
+                ui.heading("Tinyface");
                 match &self.device {
                     Some(d) => {
-                        ui.label(format!(" — {} ", d.model_name()));
+                        ui.label(format!("— {} ", d.model_name()));
                         ui.colored_label(egui::Color32::GREEN, "● Connected");
                     }
                     None => {
-                        ui.colored_label(egui::Color32::RED, "● Offline");
+                        ui.colored_label(egui::Color32::GRAY, "● Offline");
                     }
                 }
             });
@@ -151,7 +151,7 @@ impl eframe::App for TinyFaceApp {
                 }
             } else {
                 ui.vertical_centered(|ui| {
-                    ui.heading("🔌 No device detected");
+                    ui.heading("No device detected");
                     ui.label(
                         "Connect your RME Babyface Pro FS and restart the application.\n\
                          Make sure the device is recognised by ALSA:\n\n\
