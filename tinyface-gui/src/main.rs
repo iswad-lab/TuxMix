@@ -52,7 +52,7 @@ impl eframe::App for TinyFaceApp {
         // Poll device events periodically
         if let Some(ref mut device) = self.device {
             let _ = device.poll_events();
-            ctx.request_repaint_after(std::time::Duration::from_millis(16));
+            ctx.request_repaint_after(std::time::Duration::from_millis(50));
         }
 
         // ── Top panel ──────────────────────────────────────────
