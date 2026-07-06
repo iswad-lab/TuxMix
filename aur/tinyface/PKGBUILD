@@ -1,7 +1,13 @@
 # Maintainer: iswad-lab <iswad@lab.dev>
-# Contributor: iswad-lab <iswad@lab.dev>
 
-pkgname=tinyface-git
+# tinyface — TotalMix replacement for RME audio interfaces on Linux
+#
+# Building from source requires Rust (cargo) and ALSA development headers.
+#
+# When a new version is tagged on GitHub, update pkgver and the source
+# tarball checksum below.
+
+pkgname=tinyface
 pkgver=0.1.0
 pkgrel=1
 pkgdesc="TotalMix replacement for RME audio interfaces on Linux"
@@ -14,26 +20,17 @@ depends=(
 )
 makedepends=(
     'cargo'
-    'git'
 )
-provides=("${pkgname%-git}")
-conflicts=("${pkgname%-git}")
-source=("git+https://github.com/iswad-lab/Tinyface.git")
+source=("${url}/archive/v${pkgver}/${pkgname}-${pkgver}.tar.gz")
 sha256sums=('SKIP')
 
-pkgver() {
-    cd "${srcdir}/Tinyface"
-    git describe --long --tags --always 2>/dev/null | sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g' || echo "${pkgver}"
-}
-
 build() {
-    cd "${srcdir}/Tinyface"
-    export CARGO_TARGET_DIR="${srcdir}/target"
+    cd "${srcdir}/${pkgname}-${pkgver}"
     cargo build --release --workspace
 }
 
 package() {
-    cd "${srcdir}/Tinyface"
+    cd "${srcdir}/${pkgname}-${pkgver}"
 
     install -Dm755 "target/release/tinyface-gui" \
         "${pkgdir}/usr/bin/tinyface"
