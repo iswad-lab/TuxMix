@@ -1,3 +1,5 @@
+use std::fs;
+
 use alsa::mixer::{Mixer, Selem, SelemId};
 use alsa::Ctl;
 use log::{debug, info};
@@ -10,14 +12,51 @@ pub struct AlsaMixer {
     card_name: String,
 }
 
+/// Parse card index and name from `/proc/asound/cards`.
+fn read_card_list() -> Vec<(i32, String)> {
+    let mut cards = Vec::new();
+
+    let content = match fs::read_to_string("/proc/asound/cards") {
+        Ok(c) => c,
+        Err(_) => return cards,
+    };
+
+    for line in content.lines() {
+        // Lines look like: " 0 [HDMI           ]: HDA-Intel ..."
+        let trimmed = line.trim();
+        let idx: i32 = match trimmed.split(' ').next().unwrap_or("").parse() {
+            Ok(n) => n,
+            Err(_) => continue,
+        };
+
+        let name = if let Some(start) = trimmed.find('[') {
+            if let Some(end) = trimmed.find(']') {
+                trimmed[start + 1..end].trim().to_string()
+            } else {
+                continue;
+            }
+        } else {
+            continue;
+        };
+
+        cards.push((idx, name));
+    }
+
+    cards
+}
+
 impl AlsaMixer {
     /// Scan all ALSA cards and open the mixer for the first one whose
-    /// long name contains the given `card_substring`.
+    /// name (from the card info) contains the given `card_substring`.
+    ///
+    /// Reads `/proc/asound/cards` first to avoid spurious ALSA library
+    /// error messages when probing non-existent card indices.
     pub fn open_by_card_name(card_substring: &str) -> Result<Self, Error> {
-        for card_idx in 0..32 {
+        let card_list = read_card_list();
+
+        for (card_idx, _name) in &card_list {
             let card_name = format!("hw:{}", card_idx);
 
-            // Try to open the CTL interface for this card
             let ctl = match Ctl::new(&card_name, false) {
                 Err(_) => continue,
                 Ok(c) => c,
