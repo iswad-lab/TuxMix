@@ -225,58 +225,39 @@ impl<Message> canvas::Program<Message> for Fader<Message> {
     }
 }
 
+const METER_SEGMENTS: usize = 18;
+const METER_GAP: f32 = 1.0;
+
+/// A segmented LED-ladder meter, like real hardware — each segment is
+/// either lit or dark (dimly visible when dark, so the ladder itself is
+/// always readable), rather than one continuous fill.
 fn draw_meter(frame: &mut Frame, r: Rectangle, level: f32) {
     let l = level.clamp(0.0, 1.0);
     frame.fill_rectangle(r.position(), r.size(), Color::from_rgb8(0x08, 0x08, 0x0a));
 
-    if l > 0.0 {
-        let fill_h = r.height * l;
-        let fill_pos = Point::new(r.x, r.y + r.height - fill_h);
-        let fill_size = Size::new(r.width, fill_h);
+    let n = METER_SEGMENTS as f32;
+    let seg_h = (r.height - METER_GAP * (n - 1.0)) / n;
 
-        let color = if l < 0.6 {
+    for i in 0..METER_SEGMENTS {
+        let seg_bottom_frac = i as f32 / n;
+        let seg_top_frac = (i as f32 + 1.0) / n;
+        let lit = l > seg_bottom_frac;
+
+        let color = if seg_top_frac < 0.6 {
             theme::MGREEN
-        } else if l < 0.85 {
+        } else if seg_top_frac < 0.85 {
             theme::MYELLOW
         } else {
             theme::MRED
         };
-        let glow_alpha = (0.08 + l * 0.18).clamp(0.0, 0.35);
-        frame.fill_rectangle(
-            Point::new(fill_pos.x - 2.0, fill_pos.y),
-            Size::new(fill_size.width + 4.0, fill_size.height),
-            Color {
-                a: glow_alpha,
-                ..color
-            },
-        );
-        frame.fill_rectangle(fill_pos, fill_size, color);
 
-        if l >= 0.95 {
-            frame.fill_rectangle(
-                Point::new(fill_pos.x, fill_pos.y - 2.0),
-                Size::new(fill_size.width, 3.0),
-                theme::MRED,
-            );
-        }
-    }
-
-    for db in [-6.0_f32, -12.0, -24.0] {
-        let y = r.y + r.height - r.height * 10f32.powf(db / 20.0);
-        let alpha = if db == -6.0 {
-            0.14
-        } else if db == -12.0 {
-            0.10
+        let y = r.y + r.height - ((i as f32 + 1.0) * seg_h + i as f32 * METER_GAP);
+        let seg_color = if lit {
+            color
         } else {
-            0.07
+            Color { a: 0.10, ..color }
         };
-        let path = Path::line(Point::new(r.x, y), Point::new(r.x + r.width, y));
-        frame.stroke(
-            &path,
-            Stroke::default()
-                .with_color(Color { a: alpha, ..Color::WHITE })
-                .with_width(1.0),
-        );
+        frame.fill_rectangle(Point::new(r.x, y), Size::new(r.width, seg_h), seg_color);
     }
 }
 
