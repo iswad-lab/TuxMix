@@ -199,6 +199,60 @@ pub fn pick_list(
     }
 }
 
+/// A thin, minimal scrollbar rail — the scroller brightens on hover/drag
+/// instead of the default Iced chrome, matching the rest of the app.
+pub fn scrollable(
+    _theme: &iced::Theme,
+    status: iced::widget::scrollable::Status,
+) -> iced::widget::scrollable::Style {
+    use iced::widget::scrollable::{AutoScroll, Rail, Scroller, Status};
+
+    let (h_active, v_active) = match status {
+        Status::Active { .. } => (false, false),
+        Status::Hovered {
+            is_horizontal_scrollbar_hovered,
+            is_vertical_scrollbar_hovered,
+            ..
+        } => (
+            is_horizontal_scrollbar_hovered,
+            is_vertical_scrollbar_hovered,
+        ),
+        Status::Dragged {
+            is_horizontal_scrollbar_dragged,
+            is_vertical_scrollbar_dragged,
+            ..
+        } => (
+            is_horizontal_scrollbar_dragged,
+            is_vertical_scrollbar_dragged,
+        ),
+    };
+
+    let rail = |active: bool| Rail {
+        background: Some(Background::Color(Color::TRANSPARENT)),
+        border: Border::default(),
+        scroller: Scroller {
+            background: Background::Color(if active { FADER } else { BORDER }),
+            border: Border {
+                radius: 3.0.into(),
+                ..Border::default()
+            },
+        },
+    };
+
+    iced::widget::scrollable::Style {
+        container: container::Style::default(),
+        vertical_rail: rail(v_active),
+        horizontal_rail: rail(h_active),
+        gap: None,
+        auto_scroll: AutoScroll {
+            background: Background::Color(SURFACE),
+            border: Border::default(),
+            shadow: Shadow::default(),
+            icon: TEXT_PRIMARY,
+        },
+    }
+}
+
 pub fn menu(_theme: &iced::Theme) -> menu::Style {
     menu::Style {
         background: Background::Color(SURFACE),

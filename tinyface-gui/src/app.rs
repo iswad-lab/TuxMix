@@ -568,17 +568,23 @@ fn mixer_view(state: &TinyFace) -> Element<'_, Message> {
         ))
         .color(theme::TEXT_SEC)
         .size(10),
-        scrollable(input_strips).direction(scrollable::Direction::Horizontal(
-            scrollable::Scrollbar::default()
-        )),
+        scrollable(input_strips)
+            .direction(scrollable::Direction::Horizontal(
+                scrollable::Scrollbar::default()
+            ))
+            .style(theme::scrollable),
         section_header("SOFTWARE PLAYBACK"),
-        scrollable(pb_strips).direction(scrollable::Direction::Horizontal(
-            scrollable::Scrollbar::default()
-        )),
+        scrollable(pb_strips)
+            .direction(scrollable::Direction::Horizontal(
+                scrollable::Scrollbar::default()
+            ))
+            .style(theme::scrollable),
         section_header("HARDWARE OUTPUTS"),
-        scrollable(out_strips).direction(scrollable::Direction::Horizontal(
-            scrollable::Scrollbar::default()
-        )),
+        scrollable(out_strips)
+            .direction(scrollable::Direction::Horizontal(
+                scrollable::Scrollbar::default()
+            ))
+            .style(theme::scrollable),
     ]
     .spacing(8);
 

@@ -61,9 +61,11 @@ pub fn view(state: &TinyFace) -> Element<'_, Message> {
         cols = cols.push(col_widget);
     }
 
-    let scroller = scrollable(cols).direction(scrollable::Direction::Horizontal(
-        scrollable::Scrollbar::default(),
-    ));
+    let scroller = scrollable(cols)
+        .direction(scrollable::Direction::Horizontal(
+            scrollable::Scrollbar::default(),
+        ))
+        .style(theme::scrollable);
 
     container(scroller).style(theme::panel).padding(8).into()
 }
