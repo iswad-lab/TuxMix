@@ -15,7 +15,6 @@ pub const ACCENT_DIM: Color = Color::from_rgb8(0x2a, 0x6a, 0x88);
 /// `ACCENT` so the fader doesn't compete visually with the blue brand color.
 pub const FADER: Color = Color::from_rgb8(0xa8, 0xac, 0xb4);
 pub const MGREEN: Color = Color::from_rgb8(0x4c, 0xaf, 0x50);
-pub const MYELLOW: Color = Color::from_rgb8(0xff, 0xeb, 0x3b);
 pub const MRED: Color = Color::from_rgb8(0xf4, 0x43, 0x36);
 pub const PHANTOM: Color = Color::from_rgb8(0xff, 0x45, 0x45);
 pub const GCONN: Color = Color::from_rgb8(0x4c, 0xaf, 0x50);

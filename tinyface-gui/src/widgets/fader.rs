@@ -9,10 +9,13 @@ use std::time::{Duration, Instant};
 
 use crate::theme;
 
-const METER_W: f32 = 10.0;
-const GAP: f32 = 3.0;
+/// The meter and the dB ruler share one column — the meter is a
+/// translucent color wash filling the whole column, and the ruler ticks
+/// are drawn on top of it, like TotalMix — rather than two separate
+/// side-by-side strips. The fader itself gets its own centered column.
+const METER_RULER_W: f32 = 27.0;
+const GAP: f32 = 5.0;
 const TRACK_W: f32 = 24.0;
-const RULER_W: f32 = 15.0;
 const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 const FINE_SPAN: f32 = 0.08;
 
@@ -69,7 +72,7 @@ pub struct Fader<Message> {
 impl<Message> Fader<Message> {
     fn track_x(&self) -> f32 {
         if self.show_meter {
-            METER_W + GAP
+            METER_RULER_W + GAP
         } else {
             0.0
         }
@@ -180,11 +183,12 @@ impl<Message> canvas::Program<Message> for Fader<Message> {
     ) -> Vec<Geometry> {
         let mut frame = Frame::new(renderer, bounds.size());
         if self.show_meter {
-            draw_meter(
-                &mut frame,
-                Rectangle::new(Point::ORIGIN, Size::new(METER_W, bounds.height)),
-                self.meter,
-            );
+            let meter_rect =
+                Rectangle::new(Point::ORIGIN, Size::new(METER_RULER_W, bounds.height));
+            // Meter first, as a translucent wash; ruler ticks drawn on top
+            // of it so both share the column instead of splitting the strip.
+            draw_meter(&mut frame, meter_rect, self.meter);
+            draw_ruler(&mut frame, meter_rect);
         }
         draw_track(
             &mut frame,
@@ -197,15 +201,6 @@ impl<Message> canvas::Program<Message> for Fader<Message> {
             self.range,
             state.dragging,
         );
-        if self.show_meter {
-            draw_ruler(
-                &mut frame,
-                Rectangle::new(
-                    Point::new(self.track_x() + TRACK_W + GAP, 0.0),
-                    Size::new(RULER_W, bounds.height),
-                ),
-            );
-        }
         vec![frame.into_geometry()]
     }
 
@@ -225,40 +220,69 @@ impl<Message> canvas::Program<Message> for Fader<Message> {
     }
 }
 
-const METER_SEGMENTS: usize = 18;
-const METER_GAP: f32 = 1.0;
+const METER_PILL_W: f32 = 6.0;
+const METER_RADIUS: f32 = 3.0;
+const CLIP_H: f32 = 5.0;
+const CLIP_GAP: f32 = 3.0;
 
-/// A segmented LED-ladder meter, like real hardware — each segment is
-/// either lit or dark (dimly visible when dark, so the ladder itself is
-/// always readable), rather than one continuous fill.
+/// A slim rounded pill instead of a wide block — one calm color for the
+/// signal, and a separate clip "LED" above the track that only lights up
+/// near 0 dBFS, rather than a green→yellow→red gradient spanning the whole
+/// range. Reads as a minimal modern level indicator, not a traffic light.
 fn draw_meter(frame: &mut Frame, r: Rectangle, level: f32) {
     let l = level.clamp(0.0, 1.0);
-    frame.fill_rectangle(r.position(), r.size(), Color::from_rgb8(0x08, 0x08, 0x0a));
 
-    let n = METER_SEGMENTS as f32;
-    let seg_h = (r.height - METER_GAP * (n - 1.0)) / n;
+    let track = Rectangle::new(
+        Point::new(r.x, r.y + CLIP_H + CLIP_GAP),
+        Size::new(METER_PILL_W, r.height - CLIP_H - CLIP_GAP),
+    );
 
-    for i in 0..METER_SEGMENTS {
-        let seg_bottom_frac = i as f32 / n;
-        let seg_top_frac = (i as f32 + 1.0) / n;
-        let lit = l > seg_bottom_frac;
+    frame.fill(
+        &Path::new(|b| b.rounded_rectangle(track.position(), track.size(), METER_RADIUS.into())),
+        Color::from_rgb8(0x08, 0x08, 0x0a),
+    );
 
-        let color = if seg_top_frac < 0.6 {
-            theme::MGREEN
-        } else if seg_top_frac < 0.85 {
-            theme::MYELLOW
-        } else {
-            theme::MRED
-        };
-
-        let y = r.y + r.height - ((i as f32 + 1.0) * seg_h + i as f32 * METER_GAP);
-        let seg_color = if lit {
-            color
-        } else {
-            Color { a: 0.10, ..color }
-        };
-        frame.fill_rectangle(Point::new(r.x, y), Size::new(r.width, seg_h), seg_color);
+    if l > 0.0 {
+        let fill_h = track.height * l;
+        let fill_pos = Point::new(track.x, track.y + track.height - fill_h);
+        frame.fill(
+            &Path::new(|b| {
+                b.rounded_rectangle(
+                    fill_pos,
+                    Size::new(METER_PILL_W, fill_h),
+                    METER_RADIUS.into(),
+                )
+            }),
+            theme::MGREEN,
+        );
     }
+
+    // Clip LED — a fixed indicator above the track, dim until triggered.
+    let clip_rect = Rectangle::new(Point::new(r.x, r.y), Size::new(METER_PILL_W, CLIP_H));
+    let clipping = l >= 0.95;
+    let clip_color = if clipping {
+        theme::MRED
+    } else {
+        Color::from_rgb8(0x3a, 0x16, 0x16)
+    };
+    if clipping {
+        let glow = Rectangle::new(
+            Point::new(r.x - 2.0, r.y - 2.0),
+            Size::new(METER_PILL_W + 4.0, CLIP_H + 4.0),
+        );
+        frame.fill(
+            &Path::new(|b| {
+                b.rounded_rectangle(glow.position(), glow.size(), (CLIP_H / 2.0 + 2.0).into())
+            }),
+            Color { a: 0.35, ..theme::MRED },
+        );
+    }
+    frame.fill(
+        &Path::new(|b| {
+            b.rounded_rectangle(clip_rect.position(), clip_rect.size(), (CLIP_H / 2.0).into())
+        }),
+        clip_color,
+    );
 }
 
 const RAIL_W: f32 = 3.0;
@@ -358,18 +382,23 @@ fn draw_track(
     );
 }
 
+/// Drawn on top of the (translucent) meter wash, so it needs to stay
+/// legible against whatever color is lit behind it — brighter than the
+/// usual secondary text color, with a tick + number per breakpoint.
 fn draw_ruler(frame: &mut Frame, r: Rectangle) {
     const TICKS: [f32; 6] = [0.0, -6.0, -10.0, -20.0, -40.0, -60.0];
+    let label_color = theme::TEXT_SEC;
+    let x0 = r.x + METER_PILL_W + 4.0;
 
     for db in TICKS {
         let t = db_to_t(db);
         let y = r.y + r.height - r.height * t;
         let y = y.clamp(r.y + 4.0, r.y + r.height - 4.0);
 
-        let tick = Path::line(Point::new(r.x, y), Point::new(r.x + 3.0, y));
+        let tick = Path::line(Point::new(x0, y), Point::new(x0 + 3.0, y));
         frame.stroke(
             &tick,
-            Stroke::default().with_color(theme::TEXT_SEC).with_width(1.0),
+            Stroke::default().with_color(label_color).with_width(1.0),
         );
 
         let label = if db == 0.0 {
@@ -379,8 +408,8 @@ fn draw_ruler(frame: &mut Frame, r: Rectangle) {
         };
         frame.fill_text(canvas::Text {
             content: label,
-            position: Point::new(r.x + 5.0, y - 4.0),
-            color: theme::TEXT_SEC,
+            position: Point::new(x0 + 5.0, y - 4.0),
+            color: label_color,
             size: 6.5.into(),
             ..canvas::Text::default()
         });
@@ -393,7 +422,7 @@ where
 {
     let height = fader.height;
     let width = if fader.show_meter {
-        METER_W + GAP + TRACK_W + GAP + RULER_W
+        METER_RULER_W + GAP + TRACK_W
     } else {
         TRACK_W
     };

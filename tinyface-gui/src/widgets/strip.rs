@@ -127,9 +127,12 @@ pub fn strip<'a>(p: StripParams<'a>) -> Element<'a, Message> {
         rows = rows.push(text(pan_str).color(theme::ACCENT).size(9));
     }
 
-    container(rows)
-        .style(theme::panel)
-        .padding([3, 6])
-        .width(Length::Fixed(STRIP_W))
-        .into()
+    container(
+        rows.width(Length::Fill)
+            .align_x(iced::Alignment::Center),
+    )
+    .style(theme::panel)
+    .padding([3, 6])
+    .width(Length::Fixed(STRIP_W))
+    .into()
 }
