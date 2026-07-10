@@ -10,8 +10,8 @@ use crate::app::{db_text, short_label, Message};
 use crate::theme;
 use crate::widgets::fader::{fader, Fader};
 
-const FADER_H: f32 = 78.0;
-const STRIP_W: f32 = 88.0;
+const FADER_H: f32 = 150.0;
+const STRIP_W: f32 = 108.0;
 
 pub struct StripParams<'a> {
     pub cid: ChannelId,

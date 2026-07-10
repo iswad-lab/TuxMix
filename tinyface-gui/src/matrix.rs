@@ -9,7 +9,7 @@ use crate::app::{Message, TinyFace, OUT_LABELS};
 use crate::theme;
 use crate::widgets::fader::{fader, Fader};
 
-const CELL_H: f32 = 26.0;
+const CELL_H: f32 = 32.0;
 
 pub fn view(state: &TinyFace) -> Element<'_, Message> {
     let ni = state.device.inputs().len();
