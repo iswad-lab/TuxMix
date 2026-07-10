@@ -34,6 +34,15 @@ pub struct StripParams<'a> {
     pub modifiers: Modifiers,
 }
 
+/// A button's own padding-based centering isn't reliable across glyphs of
+/// different intrinsic width (e.g. "S" sat visibly left of center while "M"
+/// looked fine) — force it explicitly instead of trusting the default.
+fn centered_label<'a>(s: &'a str, size: u32) -> Element<'a, Message> {
+    container(text(s).size(size))
+        .center(Length::Fill)
+        .into()
+}
+
 pub fn strip<'a>(p: StripParams<'a>) -> Element<'a, Message> {
     let cid = p.cid;
     let out = p.output_idx;
@@ -43,12 +52,12 @@ pub fn strip<'a>(p: StripParams<'a>) -> Element<'a, Message> {
         header = header.push(text(tag).color(color).size(9));
     }
 
-    let mute_btn = button(text("M").size(10))
+    let mute_btn = button(centered_label("M", 10))
         .width(30)
         .height(18)
         .style(theme::toggle_button(p.mute, theme::MUTE_COLOR))
         .on_press(Message::Mute(cid, !p.mute));
-    let solo_btn = button(text("S").size(10))
+    let solo_btn = button(centered_label("S", 10))
         .width(30)
         .height(18)
         .style(theme::toggle_button(p.solo, theme::SOLO_COLOR))
@@ -62,7 +71,7 @@ pub fn strip<'a>(p: StripParams<'a>) -> Element<'a, Message> {
             let mut tg_row = row![].spacing(2);
             if p.has_48v {
                 tg_row = tg_row.push(
-                    button(text("48V").size(10))
+                    button(centered_label("48V", 10))
                         .width(37)
                         .height(18)
                         .style(theme::toggle_button(p.phantom, theme::PHANTOM))
@@ -71,7 +80,7 @@ pub fn strip<'a>(p: StripParams<'a>) -> Element<'a, Message> {
             }
             if p.has_pad {
                 tg_row = tg_row.push(
-                    button(text("PAD").size(10))
+                    button(centered_label("PAD", 10))
                         .width(37)
                         .height(18)
                         .style(theme::toggle_button(p.pad, theme::ACCENT))
