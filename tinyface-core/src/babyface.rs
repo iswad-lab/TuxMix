@@ -80,20 +80,14 @@ impl BabyfacePro {
         INPUT_NAMES
             .iter()
             .enumerate()
-            .map(|(i, name)| InputChannel {
-                id: i,
-                name: name.to_string(),
-                channel_type: INPUT_TYPES[i],
-                volume: 0.8,
-                pan: 0,
-                phantom: false,
-                pad: false,
-                sensitivity: if INPUT_TYPES[i] == ChannelType::Instrument {
+            .map(|(i, name)| {
+                let mut ch = InputChannel::new(i, name, INPUT_TYPES[i], OUTPUT_PAIRS);
+                ch.sensitivity = if INPUT_TYPES[i] == ChannelType::Instrument {
                     Some(Sensitivity::Plus4dBu)
                 } else {
                     None
-                },
-                routing: 0,
+                };
+                ch
             })
             .collect()
     }
@@ -101,20 +95,16 @@ impl BabyfacePro {
     fn build_playbacks() -> Vec<PlaybackChannel> {
         let mut pbs = Vec::new();
         for (i, (l, r)) in OUTPUT_NAMES.iter().enumerate() {
-            pbs.push(PlaybackChannel {
-                id: i * 2,
-                name: format!("PCM {}", l),
-                volume: 0.8,
-                pan: 0,
-                routing: i,
-            });
-            pbs.push(PlaybackChannel {
-                id: i * 2 + 1,
-                name: format!("PCM {}", r),
-                volume: 0.8,
-                pan: 0,
-                routing: i,
-            });
+            pbs.push(PlaybackChannel::new(
+                i * 2,
+                &format!("PCM {}", l),
+                OUTPUT_PAIRS,
+            ));
+            pbs.push(PlaybackChannel::new(
+                i * 2 + 1,
+                &format!("PCM {}", r),
+                OUTPUT_PAIRS,
+            ));
         }
         pbs
     }
@@ -172,7 +162,7 @@ impl BabyfacePro {
                 }
             }
 
-            // ── Volume for Inputs ───────────────────────────
+            // ── Per-output volumes ──────────────────────────
             for i in 0..self.inputs.len() {
                 let ct = ch_type_str(self.inputs[i].channel_type);
                 for out_idx in 0..OUTPUT_PAIRS {
@@ -181,25 +171,26 @@ impl BabyfacePro {
                     let expected_r = selem_name(ct, &self.inputs[i].name, out_r);
                     if name == expected_l || name == expected_r {
                         if let Ok(v) = selem.get_playback_volume(mono) {
-                            self.inputs[i].volume = (v as f32) / 65536.0;
+                            self.inputs[i].volumes[out_idx] = (v as f32) / 65536.0;
                         }
                         break;
                     }
                 }
             }
 
-            // ── Volume for Playbacks ────────────────────────
+            // ── Per-output volumes for playbacks ────────────
             for i in 0..self.playbacks.len() {
-                let ch_name = &self.playbacks[i].name[4..]; // strip "PCM " prefix
-                let expected_l =
-                    selem_name("PCM", ch_name, OUTPUT_NAMES[self.playbacks[i].routing].0);
-                let expected_r =
-                    selem_name("PCM", ch_name, OUTPUT_NAMES[self.playbacks[i].routing].1);
-                if name == expected_l || name == expected_r {
-                    if let Ok(v) = selem.get_playback_volume(mono) {
-                        self.playbacks[i].volume = (v as f32) / 65536.0;
+                let ch_name = &self.playbacks[i].name[4..]; // strip "PCM "
+                for out_idx in 0..OUTPUT_PAIRS {
+                    let (out_l, out_r) = OUTPUT_NAMES[out_idx];
+                    let expected_l = selem_name("PCM", ch_name, out_l);
+                    let expected_r = selem_name("PCM", ch_name, out_r);
+                    if name == expected_l || name == expected_r {
+                        if let Ok(v) = selem.get_playback_volume(mono) {
+                            self.playbacks[i].volumes[out_idx] = (v as f32) / 65536.0;
+                        }
+                        break;
                     }
-                    break;
                 }
             }
         }
@@ -216,6 +207,10 @@ impl BabyfacePro {
 impl RmeDevice for BabyfacePro {
     fn model_name(&self) -> &str {
         "Babyface Pro FS"
+    }
+
+    fn output_pair_count(&self) -> usize {
+        OUTPUT_PAIRS
     }
 
     fn open() -> Result<Self, Error> {
@@ -260,22 +255,26 @@ impl RmeDevice for BabyfacePro {
         &mut self.settings
     }
 
-    fn set_volume(&mut self, channel: ChannelId, volume: f32) -> Result<(), Error> {
+    fn set_volume(&mut self, channel: ChannelId, output: usize, volume: f32) -> Result<(), Error> {
         let mono = SelemChannelId::mono();
         let vol_raw = (volume.clamp(0.0, 1.0) * 65536.0) as i64;
-        let (ch_type, ch_name, routing) = match channel {
+
+        let (ch_type, ch_name) = match channel {
             ChannelId::Input(idx) => {
                 let inp = &self.inputs[idx];
-                (ch_type_str(inp.channel_type), inp.name.clone(), inp.routing)
+                (ch_type_str(inp.channel_type), inp.name.clone())
             }
             ChannelId::Playback(idx) => {
                 let pb = &self.playbacks[idx];
-                let name = pb.name[4..].to_string(); // strip "PCM "
-                ("PCM", name, pb.routing)
+                ("PCM", pb.name[4..].to_string())
             }
         };
 
-        let (out_l, out_r) = OUTPUT_NAMES[routing];
+        if output >= OUTPUT_PAIRS {
+            return Err(Error::InvalidChannel(format!("Output {}", output)));
+        }
+
+        let (out_l, out_r) = OUTPUT_NAMES[output];
         for out_name in [out_l, out_r] {
             let elem_name = selem_name(ch_type, &ch_name, out_name);
             if let Some(selem) = self.mixer.find_selem(&elem_name, 0) {
@@ -284,48 +283,86 @@ impl RmeDevice for BabyfacePro {
         }
 
         match channel {
-            ChannelId::Input(idx) => self.inputs[idx].volume = volume,
-            ChannelId::Playback(idx) => self.playbacks[idx].volume = volume,
+            ChannelId::Input(idx) => self.inputs[idx].volumes[output] = volume.clamp(0.0, 1.0),
+            ChannelId::Playback(idx) => {
+                self.playbacks[idx].volumes[output] = volume.clamp(0.0, 1.0)
+            }
         }
         Ok(())
     }
 
-    fn volume(&self, channel: ChannelId) -> Result<f32, Error> {
+    fn volume(&self, channel: ChannelId, output: usize) -> Result<f32, Error> {
         match channel {
-            ChannelId::Input(idx) => Ok(self.inputs[idx].volume),
-            ChannelId::Playback(idx) => Ok(self.playbacks[idx].volume),
+            ChannelId::Input(idx) => {
+                let ch = self
+                    .inputs
+                    .get(idx)
+                    .ok_or_else(|| Error::InvalidChannel(format!("Input {}", idx)))?;
+                ch.volumes
+                    .get(output)
+                    .copied()
+                    .ok_or_else(|| Error::InvalidChannel(format!("Output {}", output)))
+            }
+            ChannelId::Playback(idx) => {
+                let ch = self
+                    .playbacks
+                    .get(idx)
+                    .ok_or_else(|| Error::InvalidChannel(format!("Playback {}", idx)))?;
+                ch.volumes
+                    .get(output)
+                    .copied()
+                    .ok_or_else(|| Error::InvalidChannel(format!("Output {}", output)))
+            }
         }
     }
 
-    fn set_pan(&mut self, channel: ChannelId, pan: i8) -> Result<(), Error> {
+    fn set_pan(&mut self, channel: ChannelId, output: usize, pan: i8) -> Result<(), Error> {
         let pan = pan.clamp(-100, 100);
         match channel {
-            ChannelId::Input(idx) => self.inputs[idx].pan = pan,
-            ChannelId::Playback(idx) => self.playbacks[idx].pan = pan,
+            ChannelId::Input(idx) => {
+                self.inputs
+                    .get_mut(idx)
+                    .ok_or_else(|| Error::InvalidChannel(format!("Input {}", idx)))?;
+                if output >= self.inputs[idx].pans.len() {
+                    return Err(Error::InvalidChannel(format!("Output {}", output)));
+                }
+                self.inputs[idx].pans[output] = pan;
+            }
+            ChannelId::Playback(idx) => {
+                self.playbacks
+                    .get_mut(idx)
+                    .ok_or_else(|| Error::InvalidChannel(format!("Playback {}", idx)))?;
+                if output >= self.playbacks[idx].pans.len() {
+                    return Err(Error::InvalidChannel(format!("Output {}", output)));
+                }
+                self.playbacks[idx].pans[output] = pan;
+            }
         }
         Ok(())
     }
 
-    fn pan(&self, channel: ChannelId) -> Result<i8, Error> {
+    fn pan(&self, channel: ChannelId, output: usize) -> Result<i8, Error> {
         match channel {
-            ChannelId::Input(idx) => Ok(self.inputs[idx].pan),
-            ChannelId::Playback(idx) => Ok(self.playbacks[idx].pan),
-        }
-    }
-
-    fn set_routing(&mut self, channel: ChannelId, output: usize) -> Result<(), Error> {
-        let output = output.min(OUTPUT_PAIRS - 1);
-        match channel {
-            ChannelId::Input(idx) => self.inputs[idx].routing = output,
-            ChannelId::Playback(idx) => self.playbacks[idx].routing = output,
-        }
-        Ok(())
-    }
-
-    fn routing(&self, channel: ChannelId) -> Result<usize, Error> {
-        match channel {
-            ChannelId::Input(idx) => Ok(self.inputs[idx].routing),
-            ChannelId::Playback(idx) => Ok(self.playbacks[idx].routing),
+            ChannelId::Input(idx) => {
+                let ch = self
+                    .inputs
+                    .get(idx)
+                    .ok_or_else(|| Error::InvalidChannel(format!("Input {}", idx)))?;
+                ch.pans
+                    .get(output)
+                    .copied()
+                    .ok_or_else(|| Error::InvalidChannel(format!("Output {}", output)))
+            }
+            ChannelId::Playback(idx) => {
+                let ch = self
+                    .playbacks
+                    .get(idx)
+                    .ok_or_else(|| Error::InvalidChannel(format!("Playback {}", idx)))?;
+                ch.pans
+                    .get(output)
+                    .copied()
+                    .ok_or_else(|| Error::InvalidChannel(format!("Output {}", output)))
+            }
         }
     }
 

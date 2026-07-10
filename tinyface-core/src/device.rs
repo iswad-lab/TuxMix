@@ -19,9 +19,15 @@ pub struct DeviceSettings {
 ///
 /// Each implementation maps to a specific hardware model and knows
 /// how to discover and control its ALSA mixer elements.
+///
+/// The device exposes a matrix (submix) mixer: each input and playback
+/// channel has its own volume and pan towards every hardware output pair.
 pub trait RmeDevice {
     /// Human-readable model name (e.g. "Babyface Pro FS").
     fn model_name(&self) -> &str;
+
+    /// Number of physical stereo output pairs on this device.
+    fn output_pair_count(&self) -> usize;
 
     /// Attempt to detect the device on the ALSA bus and open a mixer handle.
     fn open() -> Result<Self, Error>
@@ -46,25 +52,19 @@ pub trait RmeDevice {
     /// Returns a mutable reference to the global device settings.
     fn settings_mut(&mut self) -> &mut DeviceSettings;
 
-    // ── Control operations ──────────────────────────────────────
+    // ── Control operations (submix / matrix) ──────────────────────
 
-    /// Set the volume (0.0 – 1.0) for a given channel.
-    fn set_volume(&mut self, channel: ChannelId, volume: f32) -> Result<(), Error>;
+    /// Set the volume (0.0 – 1.0) for a given channel into a specific output pair.
+    fn set_volume(&mut self, channel: ChannelId, output: usize, volume: f32) -> Result<(), Error>;
 
-    /// Get the volume (0.0 – 1.0) for a given channel.
-    fn volume(&self, channel: ChannelId) -> Result<f32, Error>;
+    /// Get the volume (0.0 – 1.0) for a given channel into a specific output pair.
+    fn volume(&self, channel: ChannelId, output: usize) -> Result<f32, Error>;
 
-    /// Set the pan (-100 .. 100) for a given channel.
-    fn set_pan(&mut self, channel: ChannelId, pan: i8) -> Result<(), Error>;
+    /// Set the pan (-100 .. 100) for a given channel into a specific output pair.
+    fn set_pan(&mut self, channel: ChannelId, output: usize, pan: i8) -> Result<(), Error>;
 
-    /// Get the pan (-100 .. 100) for a given channel.
-    fn pan(&self, channel: ChannelId) -> Result<i8, Error>;
-
-    /// Route the given channel to a physical hardware output.
-    fn set_routing(&mut self, channel: ChannelId, output: usize) -> Result<(), Error>;
-
-    /// Get the current routing destination for a channel.
-    fn routing(&self, channel: ChannelId) -> Result<usize, Error>;
+    /// Get the pan (-100 .. 100) for a given channel into a specific output pair.
+    fn pan(&self, channel: ChannelId, output: usize) -> Result<i8, Error>;
 
     // ── Scene / snapshot ────────────────────────────────────────
 
