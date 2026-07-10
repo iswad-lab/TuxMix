@@ -36,11 +36,20 @@ pub struct StripParams<'a> {
 
 /// A button's own padding-based centering isn't reliable across glyphs of
 /// different intrinsic width (e.g. "S" sat visibly left of center while "M"
-/// looked fine) — force it explicitly instead of trusting the default.
+/// looked fine) — force it explicitly instead of trusting the default. The
+/// default 1.2x line-height also reserves descender space these glyphs
+/// (M, S, no descenders) never use, which reads as "sitting too high" once
+/// centered — tightening it to 1:1 removes that residual vertical bias.
 fn centered_label<'a>(s: &'a str, size: u32) -> Element<'a, Message> {
-    container(text(s).size(size))
-        .center(Length::Fill)
-        .into()
+    container(
+        text(s)
+            .size(size)
+            .line_height(iced::widget::text::LineHeight::Absolute(
+                iced::Pixels(size as f32),
+            )),
+    )
+    .center(Length::Fill)
+    .into()
 }
 
 pub fn strip<'a>(p: StripParams<'a>) -> Element<'a, Message> {
