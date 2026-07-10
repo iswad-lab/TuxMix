@@ -341,53 +341,101 @@ pub fn view(state: &TinyFace) -> Element<'_, Message> {
     column![top, content].into()
 }
 
+/// Wraps a cluster of related controls in a recessed "chip" so the top bar
+/// reads as grouped sections instead of one long undifferentiated row.
+fn chip<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+    container(content)
+        .style(theme::chip)
+        .padding([5, 12])
+        .into()
+}
+
 fn top_bar(state: &TinyFace) -> Element<'_, Message> {
-    let status = if state.device.is_mock() {
-        text("● Simulated").color(theme::YSIM).size(12)
+    let status_color = if state.device.is_mock() {
+        theme::YSIM
     } else {
-        text("● Connected").color(theme::GCONN).size(12)
+        theme::GCONN
+    };
+    let status_label = if state.device.is_mock() {
+        "Simulated"
+    } else {
+        "Connected"
     };
 
-    let tab_hint = if state.show_matrix {
-        text("[Tab: Mixer]").color(theme::ACCENT).size(12)
-    } else {
-        text("[Tab: Matrix]").color(theme::TEXT_SEC).size(12)
-    };
+    let device_chip = chip(
+        row![
+            text("●").color(status_color).size(10),
+            text(state.device.model_name())
+                .color(theme::TEXT_PRIMARY)
+                .size(13),
+            text(status_label).color(status_color).size(11),
+        ]
+        .spacing(6)
+        .align_y(iced::Alignment::Center),
+    );
+
+    let tab_chip = chip(
+        text(if state.show_matrix { "MATRIX" } else { "MIXER" })
+            .color(theme::ACCENT)
+            .size(11),
+    );
 
     let scene_list = state.scene_list.clone();
-    let scene_picker = pick_list(scene_list, None::<String>, Message::SceneLoad)
-        .placeholder("load...")
-        .text_size(11);
+    let scene_group = chip(
+        row![
+            text("Scene").color(theme::TEXT_SEC).size(11),
+            iced::widget::text_input("name", &state.scene_name)
+                .on_input(Message::SceneNameChanged)
+                .on_submit(Message::SceneSave)
+                .style(theme::text_input)
+                .width(Length::Fixed(90.0))
+                .size(11),
+            iced::widget::button(text("Save").size(11))
+                .style(theme::plain_button)
+                .on_press(Message::SceneSave),
+            pick_list(scene_list, None::<String>, Message::SceneLoad)
+                .placeholder("load...")
+                .style(theme::pick_list)
+                .menu_style(theme::menu)
+                .text_size(11),
+        ]
+        .spacing(8)
+        .align_y(iced::Alignment::Center),
+    );
 
-    let out_picker = pick_list(
-        OUT_LABELS.to_vec(),
-        Some(OUT_LABELS[state.sel_out]),
-        |label| {
-            let idx = OUT_LABELS.iter().position(|l| *l == label).unwrap_or(0);
-            Message::SelectOutput(idx)
-        },
-    )
-    .text_size(12);
+    let submix_group = chip(
+        row![
+            text("Submix").color(theme::TEXT_SEC).size(11),
+            pick_list(
+                OUT_LABELS.to_vec(),
+                Some(OUT_LABELS[state.sel_out]),
+                |label| {
+                    let idx = OUT_LABELS.iter().position(|l| *l == label).unwrap_or(0);
+                    Message::SelectOutput(idx)
+                },
+            )
+            .style(theme::pick_list)
+            .menu_style(theme::menu)
+            .text_size(12),
+        ]
+        .spacing(8)
+        .align_y(iced::Alignment::Center),
+    );
+
+    let clock_chip = chip(
+        text(state.device.settings().clock_source.clone())
+            .color(theme::TEXT_SEC)
+            .size(11),
+    );
 
     let bar = row![
         text("Tinyface").color(theme::ACCENT).size(20),
-        text(state.device.model_name()).size(14),
-        status,
-        tab_hint,
-        iced::widget::text_input("scene", &state.scene_name)
-            .on_input(Message::SceneNameChanged)
-            .on_submit(Message::SceneSave)
-            .width(Length::Fixed(90.0))
-            .size(11),
-        iced::widget::button(text("Save").size(11))
-            .style(theme::plain_button)
-            .on_press(Message::SceneSave),
-        scene_picker,
-        text("Submix:").size(12),
-        out_picker,
-        text(state.device.settings().clock_source.clone())
-            .color(theme::TEXT_SEC)
-            .size(12),
+        device_chip,
+        tab_chip,
+        iced::widget::Space::new().width(Length::Fill),
+        scene_group,
+        submix_group,
+        clock_chip,
     ]
     .spacing(10)
     .align_y(iced::Alignment::Center);

@@ -1,5 +1,6 @@
 //! Color palette shared across the whole GUI, ported 1:1 from the v1 (egui) palette.
 
+use iced::widget::overlay::menu;
 use iced::widget::{button, container};
 use iced::{Background, Border, Color, Shadow};
 
@@ -87,5 +88,82 @@ pub fn plain_button(_theme: &iced::Theme, status: button::Status) -> button::Sty
         },
         shadow: Shadow::default(),
         snap: false,
+    }
+}
+
+/// A recessed group container — used to visually cluster related top-bar
+/// controls (e.g. the scene name/save/load trio) against the flatter
+/// top-bar background.
+pub fn chip(_theme: &iced::Theme) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(BG_DEEP)),
+        border: Border {
+            color: BORDER,
+            width: 1.0,
+            radius: 6.0.into(),
+        },
+        text_color: Some(TEXT_PRIMARY),
+        shadow: Shadow::default(),
+        snap: false,
+    }
+}
+
+pub fn text_input(
+    _theme: &iced::Theme,
+    status: iced::widget::text_input::Status,
+) -> iced::widget::text_input::Style {
+    use iced::widget::text_input::Status;
+    let border_color = match status {
+        Status::Focused { .. } => FADER,
+        _ => BORDER,
+    };
+    iced::widget::text_input::Style {
+        background: Background::Color(SURFACE),
+        border: Border {
+            color: border_color,
+            width: 1.0,
+            radius: 4.0.into(),
+        },
+        icon: TEXT_SEC,
+        placeholder: TEXT_SEC,
+        value: TEXT_PRIMARY,
+        selection: ACCENT_DIM,
+    }
+}
+
+pub fn pick_list(
+    _theme: &iced::Theme,
+    status: iced::widget::pick_list::Status,
+) -> iced::widget::pick_list::Style {
+    use iced::widget::pick_list::Status;
+    let border_color = match status {
+        Status::Opened { .. } | Status::Hovered => FADER,
+        Status::Active => BORDER,
+    };
+    iced::widget::pick_list::Style {
+        text_color: TEXT_PRIMARY,
+        placeholder_color: TEXT_SEC,
+        handle_color: TEXT_SEC,
+        background: Background::Color(SURFACE),
+        border: Border {
+            color: border_color,
+            width: 1.0,
+            radius: 4.0.into(),
+        },
+    }
+}
+
+pub fn menu(_theme: &iced::Theme) -> menu::Style {
+    menu::Style {
+        background: Background::Color(SURFACE),
+        border: Border {
+            color: BORDER,
+            width: 1.0,
+            radius: 4.0.into(),
+        },
+        text_color: TEXT_PRIMARY,
+        selected_text_color: TEXT_PRIMARY,
+        selected_background: Background::Color(ACCENT_DIM),
+        shadow: Shadow::default(),
     }
 }
