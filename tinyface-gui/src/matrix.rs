@@ -47,6 +47,7 @@ pub fn view(state: &TinyFace) -> Element<'_, Message> {
             col_widget = col_widget.push(fader(Fader {
                 value: vol,
                 range: (0.0, 1.0),
+                default_value: 0.75,
                 meter: 0.0,
                 height: CELL_H,
                 show_meter: false,

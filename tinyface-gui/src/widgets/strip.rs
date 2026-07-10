@@ -86,6 +86,7 @@ pub fn strip<'a>(p: StripParams<'a>) -> Element<'a, Message> {
     let fader_widget = fader(Fader {
         value: p.vol,
         range: p.drag_range.unwrap_or((0.0, 1.0)),
+        default_value: default_vol,
         meter: p.meter,
         height: FADER_H,
         show_meter: true,

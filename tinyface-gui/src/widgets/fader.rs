@@ -12,12 +12,50 @@ use crate::theme;
 const METER_W: f32 = 10.0;
 const GAP: f32 = 3.0;
 const TRACK_W: f32 = 24.0;
+const RULER_W: f32 = 15.0;
 const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 const FINE_SPAN: f32 = 0.08;
+
+/// Fader travel is dB-tapered (like real hardware / TotalMix), not linear
+/// amplitude — a power curve (t = 1 - x^K, x = db/FLOOR_DB) gives generous
+/// resolution near unity and compresses the bottom into silence, without
+/// the sharp knee a two-segment mapping produces (which crowded the
+/// 0/-6/-10 ruler ticks together).
+const FLOOR_DB: f32 = -60.0;
+const TAPER_K: f32 = 0.6;
+
+fn db_to_t(db: f32) -> f32 {
+    let db = db.clamp(FLOOR_DB, 0.0);
+    let x = (db / FLOOR_DB).clamp(0.0, 1.0);
+    (1.0 - x.powf(TAPER_K)).clamp(0.0, 1.0)
+}
+
+fn t_to_db(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    let x = (1.0 - t).powf(1.0 / TAPER_K);
+    (x * FLOOR_DB).clamp(FLOOR_DB, 0.0)
+}
+
+fn vol_to_t(vol: f32) -> f32 {
+    if vol <= 0.0 {
+        0.0
+    } else {
+        db_to_t(20.0 * vol.log10())
+    }
+}
+
+fn t_to_vol(t: f32) -> f32 {
+    if t <= 0.0 {
+        0.0
+    } else {
+        (10f32.powf(t_to_db(t) / 20.0)).clamp(0.0, 1.0)
+    }
+}
 
 pub struct Fader<Message> {
     pub value: f32,
     pub range: (f32, f32),
+    pub default_value: f32,
     pub meter: f32,
     pub height: f32,
     pub show_meter: bool,
@@ -56,8 +94,9 @@ impl<Message> canvas::Program<Message> for Fader<Message> {
     ) -> Option<canvas::Action<Message>> {
         let locate = |y: f32| -> f32 {
             let (lo, hi) = self.range;
-            let t = 1.0 - ((y - bounds.y) / bounds.height).clamp(0.0, 1.0);
-            lo + t * (hi - lo)
+            let screen_t = 1.0 - ((y - bounds.y) / bounds.height).clamp(0.0, 1.0);
+            let (t_lo, t_hi) = (vol_to_t(lo), vol_to_t(hi));
+            t_to_vol(t_lo + screen_t * (t_hi - t_lo))
         };
 
         match event {
@@ -154,9 +193,19 @@ impl<Message> canvas::Program<Message> for Fader<Message> {
                 Size::new(TRACK_W, bounds.height),
             ),
             self.value,
+            self.default_value,
             self.range,
             state.dragging,
         );
+        if self.show_meter {
+            draw_ruler(
+                &mut frame,
+                Rectangle::new(
+                    Point::new(self.track_x() + TRACK_W + GAP, 0.0),
+                    Size::new(RULER_W, bounds.height),
+                ),
+            );
+        }
         vec![frame.into_geometry()]
     }
 
@@ -232,19 +281,35 @@ fn draw_meter(frame: &mut Frame, r: Rectangle, level: f32) {
 }
 
 const RAIL_W: f32 = 3.0;
-const HANDLE_R: f32 = 7.0;
+const CAP_W: f32 = 20.0;
+const CAP_H: f32 = 13.0;
+const CAP_RADIUS: f32 = 2.5;
+const REF_R: f32 = 2.5;
 
-fn draw_track(frame: &mut Frame, r: Rectangle, value: f32, range: (f32, f32), dragging: bool) {
+fn draw_track(
+    frame: &mut Frame,
+    r: Rectangle,
+    value: f32,
+    default_value: f32,
+    range: (f32, f32),
+    dragging: bool,
+) {
     let (lo, hi) = range;
-    let t = if hi > lo {
-        ((value - lo) / (hi - lo)).clamp(0.0, 1.0)
-    } else {
-        0.0
+    let (t_lo, t_hi) = (vol_to_t(lo), vol_to_t(hi));
+
+    let pos_of = |v: f32| -> f32 {
+        let t = if t_hi > t_lo {
+            ((vol_to_t(v) - t_lo) / (t_hi - t_lo)).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        r.y + r.height - r.height * t
     };
 
     let cx = r.x + r.width / 2.0;
-    let raw_y = r.y + r.height - r.height * t;
-    let handle_y = raw_y.clamp(r.y + HANDLE_R, r.y + r.height - HANDLE_R);
+    let half_cap = CAP_H / 2.0;
+    let raw_y = pos_of(value);
+    let cap_y = raw_y.clamp(r.y + half_cap, r.y + r.height - half_cap);
 
     // Groove — the full-length rail, unfilled color.
     let groove = Path::rectangle(
@@ -253,34 +318,92 @@ fn draw_track(frame: &mut Frame, r: Rectangle, value: f32, range: (f32, f32), dr
     );
     frame.fill(&groove, theme::BORDER);
 
-    // Filled portion of the rail, from the bottom up to the handle.
-    if t > 0.0 {
+    // Filled portion of the rail, from the bottom up to the cap.
+    if raw_y < r.y + r.height {
         let fill = Path::rectangle(
-            Point::new(cx - RAIL_W / 2.0, handle_y),
-            Size::new(RAIL_W, r.y + r.height - handle_y),
+            Point::new(cx - RAIL_W / 2.0, cap_y),
+            Size::new(RAIL_W, r.y + r.height - cap_y),
         );
         frame.fill(&fill, theme::FADER);
     }
 
-    // Handle — flat, modern: a soft drop shadow, a focus glow while
-    // dragging, and a solid circle. No bevels, no gradients.
-    let shadow = Path::circle(Point::new(cx, handle_y + 1.5), HANDLE_R + 1.0);
-    frame.fill(&shadow, Color::from_rgba8(0x00, 0x00, 0x00, 0.35));
+    // Unity/default reference — a small hollow ring on the rail, like the
+    // 0 dB mark on a real console strip.
+    let ref_y = pos_of(default_value).clamp(r.y + REF_R, r.y + r.height - REF_R);
+    frame.stroke(
+        &Path::circle(Point::new(cx, ref_y), REF_R),
+        Stroke::default().with_color(theme::TEXT_SEC).with_width(1.0),
+    );
+
+    // Cap — flat + ridged, like a real fader cap grip, no heavy bevel.
+    let cap_left = cx - CAP_W / 2.0;
+    let cap_top = cap_y - half_cap;
 
     if dragging {
-        let glow = Path::circle(Point::new(cx, handle_y), HANDLE_R + 5.0);
-        frame.fill(&glow, Color { a: 0.20, ..theme::FADER });
+        let glow = Path::rectangle(
+            Point::new(cap_left - 3.0, cap_top - 3.0),
+            Size::new(CAP_W + 6.0, CAP_H + 6.0),
+        );
+        frame.fill(&glow, Color { a: 0.18, ..theme::FADER });
     }
 
-    let handle = Path::circle(Point::new(cx, handle_y), HANDLE_R);
-    frame.fill(&handle, if dragging { theme::FADER } else { Color::WHITE });
+    let body = Path::new(|b| {
+        b.rounded_rectangle(
+            Point::new(cap_left, cap_top),
+            Size::new(CAP_W, CAP_H),
+            CAP_RADIUS.into(),
+        )
+    });
+    let body_color = if dragging {
+        Color::from_rgb8(0xf0, 0xf1, 0xf4)
+    } else {
+        theme::FADER
+    };
+    frame.fill(&body, body_color);
+
+    // Ridge lines — the grip texture.
+    for i in 1..=3 {
+        let y = cap_top + (CAP_H / 4.0) * i as f32;
+        let ridge = Path::rectangle(
+            Point::new(cap_left + 3.0, y - 0.5),
+            Size::new(CAP_W - 6.0, 1.0),
+        );
+        frame.fill(&ridge, Color::from_rgba8(0x00, 0x00, 0x00, 0.25));
+    }
 
     frame.stroke(
-        &handle,
-        Stroke::default()
-            .with_color(if dragging { Color::WHITE } else { theme::FADER })
-            .with_width(2.0),
+        &body,
+        Stroke::default().with_color(theme::BORDER).with_width(1.0),
     );
+}
+
+fn draw_ruler(frame: &mut Frame, r: Rectangle) {
+    const TICKS: [f32; 6] = [0.0, -6.0, -10.0, -20.0, -40.0, -60.0];
+
+    for db in TICKS {
+        let t = db_to_t(db);
+        let y = r.y + r.height - r.height * t;
+        let y = y.clamp(r.y + 4.0, r.y + r.height - 4.0);
+
+        let tick = Path::line(Point::new(r.x, y), Point::new(r.x + 3.0, y));
+        frame.stroke(
+            &tick,
+            Stroke::default().with_color(theme::TEXT_SEC).with_width(1.0),
+        );
+
+        let label = if db == 0.0 {
+            "0".to_string()
+        } else {
+            format!("{}", -db as i32)
+        };
+        frame.fill_text(canvas::Text {
+            content: label,
+            position: Point::new(r.x + 5.0, y - 4.0),
+            color: theme::TEXT_SEC,
+            size: 6.5.into(),
+            ..canvas::Text::default()
+        });
+    }
 }
 
 pub fn fader<'a, Message: 'a>(fader: Fader<Message>) -> Element<'a, Message>
@@ -289,7 +412,7 @@ where
 {
     let height = fader.height;
     let width = if fader.show_meter {
-        METER_W + GAP + TRACK_W
+        METER_W + GAP + TRACK_W + GAP + RULER_W
     } else {
         TRACK_W
     };
