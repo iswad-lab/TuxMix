@@ -22,7 +22,7 @@ pub mod mock;
 pub mod scene;
 
 pub use babyface::BabyfacePro;
-pub use channel::{ChannelId, ChannelType, InputChannel, PlaybackChannel};
+pub use channel::{ChannelId, ChannelType, InputChannel, OutputChannel, PlaybackChannel};
 pub use device::{DeviceSettings, RmeDevice};
 pub use error::Error;
 pub use mixer::AlsaMixer;

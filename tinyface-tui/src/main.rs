@@ -5,8 +5,6 @@
 //! cargo run -p tinyface-tui -- --mock    # simulation
 //! ```
 
-use std::io::{self, Stdout};
-
 use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind},
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
@@ -20,31 +18,17 @@ use ratatui::{
     widgets::{Block, Borders, Gauge, Paragraph},
     Frame, Terminal,
 };
-
+use std::io::{self, Stdout};
 use tinyface_core::{BabyfacePro, ChannelId, MockBabyfacePro, RmeDevice};
-
-// ── Device enum ─────────────────────────────────────────────────
 
 enum DeviceHandle {
     Real(BabyfacePro),
     Mock(MockBabyfacePro),
 }
-
 macro_rules! delegate {
-    ($self:expr, $method:ident($($arg:expr),*)) => {
-        match $self {
-            DeviceHandle::Real(d) => d.$method($($arg),*),
-            DeviceHandle::Mock(d) => d.$method($($arg),*),
-        }
-    };
-    ($self:expr, $method:ident) => {
-        match $self {
-            DeviceHandle::Real(d) => d.$method(),
-            DeviceHandle::Mock(d) => d.$method(),
-        }
-    };
+    ($self:expr, $method:ident($($arg:expr),*)) => { match $self { DeviceHandle::Real(d) => d.$method($($arg),*), DeviceHandle::Mock(d) => d.$method($($arg),*), } };
+    ($self:expr, $method:ident) => { match $self { DeviceHandle::Real(d) => d.$method(), DeviceHandle::Mock(d) => d.$method(), } };
 }
-
 impl RmeDevice for DeviceHandle {
     fn model_name(&self) -> &str {
         delegate!(self, model_name)
@@ -66,6 +50,12 @@ impl RmeDevice for DeviceHandle {
     }
     fn playbacks_mut(&mut self) -> &mut [tinyface_core::PlaybackChannel] {
         delegate!(self, playbacks_mut)
+    }
+    fn outputs(&self) -> &[tinyface_core::OutputChannel] {
+        delegate!(self, outputs)
+    }
+    fn outputs_mut(&mut self) -> &mut [tinyface_core::OutputChannel] {
+        delegate!(self, outputs_mut)
     }
     fn settings(&self) -> &tinyface_core::DeviceSettings {
         delegate!(self, settings)
@@ -90,6 +80,18 @@ impl RmeDevice for DeviceHandle {
     fn pan(&self, ch: ChannelId, out: usize) -> Result<i8, tinyface_core::Error> {
         delegate!(self, pan(ch, out))
     }
+    fn set_mute(&mut self, ch: ChannelId, m: bool) -> Result<(), tinyface_core::Error> {
+        delegate!(self, set_mute(ch, m))
+    }
+    fn mute(&self, ch: ChannelId) -> Result<bool, tinyface_core::Error> {
+        delegate!(self, mute(ch))
+    }
+    fn set_solo(&mut self, ch: ChannelId, s: bool) -> Result<(), tinyface_core::Error> {
+        delegate!(self, set_solo(ch, s))
+    }
+    fn solo(&self, ch: ChannelId) -> Result<bool, tinyface_core::Error> {
+        delegate!(self, solo(ch))
+    }
     fn capture_scene(&self) -> tinyface_core::Scene {
         delegate!(self, capture_scene)
     }
@@ -100,7 +102,6 @@ impl RmeDevice for DeviceHandle {
         delegate!(self, poll_events)
     }
 }
-
 impl DeviceHandle {
     fn open_real() -> Option<Self> {
         BabyfacePro::open().ok().map(DeviceHandle::Real)
@@ -124,12 +125,7 @@ impl DeviceHandle {
         matches!(self, DeviceHandle::Mock(_))
     }
 }
-
-// ── Constants ────────────────────────────────────────────────────
-
 const OUT_LABELS: [&str; 6] = ["AN1/2", "PH3/4", "AS1/2", "A3/A4", "A5/A6", "A7/A8"];
-
-// ── Main ─────────────────────────────────────────────────────────
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
@@ -138,11 +134,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         DeviceHandle::open_mock()
     } else {
         DeviceHandle::open_real().unwrap_or_else(|| {
-            eprintln!("No device found. Use --mock for simulation.");
+            eprintln!("No device found. Use --mock.");
             DeviceHandle::open_mock()
         })
     };
-
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     stdout.execute(EnterAlternateScreen)?;
@@ -160,15 +155,94 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 fn run(term: &mut Terminal<CrosstermBackend<Stdout>>, dev: &mut DeviceHandle) -> io::Result<()> {
     let mut show_matrix = false;
+    let mut section: usize = 0; // 0=inputs, 1=playbacks, 2=outputs // 0=inputs, 1=playbacks
+    let mut channel: usize = 0;
     loop {
         let _ = dev.poll_events();
-        term.draw(|f| ui(f, dev, show_matrix))?;
+        term.draw(|f| ui(f, dev, show_matrix, section, channel))?;
         if event::poll(std::time::Duration::from_millis(100))? {
             if let Event::Key(k) = event::read()? {
                 if k.kind == KeyEventKind::Press {
                     match k.code {
                         KeyCode::Char('q') | KeyCode::Esc => break,
                         KeyCode::Tab => show_matrix = !show_matrix,
+                        KeyCode::Left => {
+                            if channel > 0 {
+                                channel -= 1;
+                            }
+                        }
+                        KeyCode::Right => {
+                            let max = match section {
+                                0 => dev.inputs().len(),
+                                1 => dev.playbacks().len(),
+                                _ => dev.outputs().len(),
+                            };
+                            if channel + 1 < max {
+                                channel += 1;
+                            }
+                        }
+                        KeyCode::Up => {
+                            if section > 0 {
+                                section -= 1;
+                                channel = 0;
+                            }
+                        }
+                        KeyCode::Down => {
+                            let max_sec = 2;
+                            if section < max_sec {
+                                section += 1;
+                                channel = 0;
+                            }
+                        }
+                        KeyCode::Char('+') | KeyCode::Char('=') => {
+                            let cid = match section {
+                                0 => ChannelId::Input(channel),
+                                1 => ChannelId::Playback(channel),
+                                _ => ChannelId::Output(channel),
+                            };
+                            if let Ok(v) = dev.volume(cid, 0) {
+                                let _ = dev.set_volume(cid, 0, (v + 0.05).min(1.0));
+                            }
+                        }
+                        KeyCode::Char('-') => {
+                            let cid = match section {
+                                0 => ChannelId::Input(channel),
+                                1 => ChannelId::Playback(channel),
+                                _ => ChannelId::Output(channel),
+                            };
+                            if let Ok(v) = dev.volume(cid, 0) {
+                                let _ = dev.set_volume(cid, 0, (v - 0.05).max(0.0));
+                            }
+                        }
+                        KeyCode::Char('m') => {
+                            let cid = match section {
+                                0 => ChannelId::Input(channel),
+                                1 => ChannelId::Playback(channel),
+                                _ => ChannelId::Output(channel),
+                            };
+                            if let Ok(m) = dev.mute(cid) {
+                                let _ = dev.set_mute(cid, !m);
+                            }
+                        }
+                        KeyCode::Char('s') => {
+                            let cid = match section {
+                                0 => ChannelId::Input(channel),
+                                1 => ChannelId::Playback(channel),
+                                _ => ChannelId::Output(channel),
+                            };
+                            if let Ok(s) = dev.solo(cid) {
+                                let _ = dev.set_solo(cid, !s);
+                            }
+                        }
+                        KeyCode::Char('p') => {
+                            if section == 0 {
+                                if let Some(ic) = dev.inputs_mut().get_mut(channel) {
+                                    if ic.channel_type == tinyface_core::ChannelType::Mic {
+                                        ic.phantom = !ic.phantom;
+                                    }
+                                }
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -178,15 +252,12 @@ fn run(term: &mut Terminal<CrosstermBackend<Stdout>>, dev: &mut DeviceHandle) ->
     Ok(())
 }
 
-fn ui(f: &mut Frame, dev: &DeviceHandle, show_matrix: bool) {
+fn ui(f: &mut Frame, dev: &DeviceHandle, show_matrix: bool, sel_sec: usize, sel_chan: usize) {
     let area = f.area();
-
-    // Split into fixed top sections and flexible content + footer
     let top = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(3), Constraint::Length(3)])
         .split(area);
-
     let bottom = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(1), Constraint::Length(2)])
@@ -196,24 +267,19 @@ fn ui(f: &mut Frame, dev: &DeviceHandle, show_matrix: bool) {
             area.width,
             area.bottom() - top[1].bottom(),
         ));
-
     let content = bottom[0];
     let footer_area = bottom[1];
-
-    // Content sub-layout
-    let (inputs_area, playbacks_area, matrix_area) = if show_matrix {
-        (Rect::default(), Rect::default(), content)
+    let (inputs_area, playbacks_area, outputs_area, matrix_area) = if show_matrix {
+        (Rect::default(), Rect::default(), Rect::default(), content)
     } else {
         let c = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Min(1), Constraint::Min(1)])
+            .constraints([Constraint::Min(1), Constraint::Min(1), Constraint::Min(1)])
             .split(content);
-        (c[0], c[1], Rect::default())
+        (c[0], c[1], c[2], Rect::default())
     };
-
-    // Header
     let view_tag = if show_matrix {
-        " [Matrix View]".to_string().yellow().bold().to_string()
+        " [Matrix]".yellow().bold().to_string()
     } else {
         String::new()
     };
@@ -222,23 +288,24 @@ fn ui(f: &mut Frame, dev: &DeviceHandle, show_matrix: bool) {
     } else {
         "".into()
     };
-    let h = Paragraph::new(Line::from(vec![
-        Span::styled("Tinyface", Style::default().add_modifier(Modifier::BOLD)),
-        Span::raw(format!(" — {}  ", dev.model_name())),
-        mode,
-        Span::raw(format!("{}", view_tag)),
-        Span::raw("  q:quit Tab:toggle"),
-    ]))
-    .block(Block::default().borders(Borders::ALL));
-    f.render_widget(h, top[0]);
+    f.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("Tinyface", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(format!(" - {}  ", dev.model_name())),
+            mode,
+            Span::raw(format!("{}", view_tag)),
+            Span::raw("  q:quit Tab:toggle"),
+        ]))
+        .block(Block::default().borders(Borders::ALL)),
+        top[0],
+    );
 
-    // Summary
     let s = format!(
         "HW Inputs: {}  |  SW Playbacks: {}  |  Output pairs: {}  |  Clock: {}",
         dev.inputs().len(),
         dev.playbacks().len(),
         dev.output_pair_count(),
-        dev.settings().clock_source,
+        dev.settings().clock_source
     );
     f.render_widget(
         Paragraph::new(s).block(Block::default().borders(Borders::ALL).title("Overview")),
@@ -248,37 +315,84 @@ fn ui(f: &mut Frame, dev: &DeviceHandle, show_matrix: bool) {
     if show_matrix {
         render_matrix(f, "Matrix Mixer", matrix_area, dev);
     } else {
-        render_strips(f, "Hardware Inputs", inputs_area, dev.inputs().len(), |i| {
-            let ch = &dev.inputs()[i];
-            let m = dev.input_meter(i);
-            let mut label = format!("{} [{:?}]", ch.name, ch.channel_type);
-            if ch.phantom {
-                label.push_str(" 48V");
-            }
-            if ch.pad {
-                label.push_str(" PAD");
-            }
-            (label, m)
-        });
-
+        render_strips(
+            f,
+            "Hardware Inputs",
+            inputs_area,
+            dev.inputs().len(),
+            sel_sec == 0,
+            sel_chan,
+            |i| {
+                let ch = &dev.inputs()[i];
+                let m = dev.input_meter(i);
+                let mut label = format!("{} [{:?}]", ch.name, ch.channel_type);
+                if ch.mute {
+                    label.push_str(" [M]");
+                }
+                if ch.solo {
+                    label.push_str(" [S]");
+                }
+                if ch.phantom {
+                    label.push_str(" 48V");
+                }
+                if ch.pad {
+                    label.push_str(" PAD");
+                }
+                (label, m)
+            },
+        );
         render_strips(
             f,
             "Software Playbacks",
             playbacks_area,
             dev.playbacks().len(),
+            sel_sec == 1,
+            sel_chan,
             |i| {
                 let ch = &dev.playbacks()[i];
                 let m = dev.playback_meter(i);
-                (format!("{}", ch.name), m)
+                let mut label = format!("{}", ch.name);
+                if ch.mute {
+                    label.push_str(" [M]");
+                }
+                if ch.solo {
+                    label.push_str(" [S]");
+                }
+                (label, m)
+            },
+        );
+        render_strips(
+            f,
+            "Hardware Outputs",
+            outputs_area,
+            dev.outputs().len(),
+            sel_sec == 2,
+            sel_chan,
+            |i| {
+                let ch = &dev.outputs()[i];
+                let mut label = format!("{}", ch.name);
+                if ch.mute {
+                    label.push_str(" [M]");
+                }
+                if ch.solo {
+                    label.push_str(" [S]");
+                }
+                (label, 0.0)
             },
         );
     }
-
-    // Footer
-    let footer = if show_matrix {
-        "Tab: retour au mixer"
+    let footer: String = if show_matrix {
+        "Tab: retour au mixer".into()
     } else {
-        "q: quit  |  Tab: matrix view"
+        format!(
+            "{}:{}  +/-:vol  m:mute  s:solo  p:48V  arrows:navigate  q:quit",
+            match sel_sec {
+                0 => "IN",
+                1 => "PB",
+                _ => "OUT",
+            },
+            sel_chan
+        )
     };
     f.render_widget(
         Paragraph::new(footer).block(Block::default().borders(Borders::TOP)),
@@ -291,36 +405,52 @@ fn render_strips(
     title: &str,
     area: Rect,
     count: usize,
+    is_focused: bool,
+    selected: usize,
     label_fn: impl Fn(usize) -> (String, f32),
 ) {
     let block = Block::default().borders(Borders::ALL).title(title);
     let inner = block.inner(area);
     f.render_widget(block, area);
-
     let cols = count.min(6) as u16;
     let rows = ((count as u16) + cols - 1) / cols;
     let row_h = (inner.height / rows.max(1)).max(3);
-
     for i in 0..count {
         let (label, meter) = label_fn(i);
         let col = i as u16 % cols;
         let row = i as u16 / cols;
-        let x = inner.left() + col * (inner.width / cols);
-        let y = inner.top() + row * row_h;
         let w = inner.width / cols;
-        let ch_area = Rect::new(x, y, w, row_h - 1);
-
+        let ch_area = Rect::new(
+            inner.left() + col * w,
+            inner.top() + row * row_h,
+            w,
+            row_h - 1,
+        );
+        let is_sel = is_focused && i == selected;
+        let mut style = Style::default();
+        if is_sel {
+            style = style
+                .bg(Color::Rgb(0x2a, 0x6a, 0x88))
+                .add_modifier(Modifier::BOLD);
+        }
         f.render_widget(
             Paragraph::new(Line::from(vec![Span::styled(
-                label,
-                Style::default().add_modifier(Modifier::BOLD),
+                if is_sel {
+                    format!("> {} <", label)
+                } else {
+                    label
+                },
+                style,
             )])),
             ch_area,
         );
-
         if meter > 0.0 {
-            let my = ch_area.bottom().saturating_sub(2);
-            let ma = Rect::new(ch_area.left(), my, ch_area.width.min(20), 1);
+            let ma = Rect::new(
+                ch_area.left(),
+                ch_area.bottom().saturating_sub(2),
+                ch_area.width.min(20),
+                1,
+            );
             let c = if meter < 0.6 {
                 Color::Green
             } else if meter < 0.85 {
@@ -343,17 +473,10 @@ fn render_matrix(f: &mut Frame, title: &str, area: Rect, dev: &DeviceHandle) {
     let block = Block::default().borders(Borders::ALL).title(title);
     let inner = block.inner(area);
     f.render_widget(block, area);
-
     let ni = dev.inputs().len();
     let np = dev.playbacks().len();
     let total = ni + np;
-
-    // Scrollable matrix is hard in TUI with ratatui without a proper table widget.
-    // For now show a simplified overview: per-output volumes for selected channels.
     let mut lines = Vec::new();
-    lines.push(format!("  {:>8}", ""));
-
-    // Header
     let mut header = "  ".to_string();
     for col in 0..total.min(8) {
         let name = if col < ni {
@@ -364,8 +487,6 @@ fn render_matrix(f: &mut Frame, title: &str, area: Rect, dev: &DeviceHandle) {
         header.push_str(&format!(" {:>6}", &name[..name.len().min(6)]));
     }
     lines.push(header);
-
-    // Rows
     for row in 0..6 {
         let mut line = format!("  {:>8}", OUT_LABELS[row]);
         for col in 0..total.min(8) {
@@ -378,8 +499,5 @@ fn render_matrix(f: &mut Frame, title: &str, area: Rect, dev: &DeviceHandle) {
         }
         lines.push(line);
     }
-
-    let text = lines.join("\n");
-    let p = Paragraph::new(text);
-    f.render_widget(p, inner);
+    f.render_widget(Paragraph::new(lines.join("\n")), inner);
 }

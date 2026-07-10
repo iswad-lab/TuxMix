@@ -6,6 +6,7 @@ use strum::{Display, EnumString};
 pub enum ChannelId {
     Input(usize),
     Playback(usize),
+    Output(usize),
 }
 
 /// The type of an input channel.
@@ -17,9 +18,6 @@ pub enum ChannelType {
     SPDIF,
     ADAT,
 }
-
-/// Default number of output pairs for a device (Babyface Pro FS).
-pub const DEFAULT_OUTPUT_PAIRS: usize = 6;
 
 /// A single physical hardware input channel.
 ///
@@ -37,9 +35,10 @@ pub struct InputChannel {
     pub phantom: bool, // 48V
     pub pad: bool,
     pub sensitivity: Option<Sensitivity>,
+    pub mute: bool,
+    pub solo: bool,
 }
 
-/// Sensitivity setting for instrument inputs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display)]
 pub enum Sensitivity {
     Minus10dBV,
@@ -57,10 +56,25 @@ pub struct PlaybackChannel {
     pub volumes: Vec<f32>,
     /// Pan per output pair (-100 .. 100).
     pub pans: Vec<i8>,
+    pub mute: bool,
+    pub solo: bool,
+}
+
+/// A physical hardware output (stereo pair) on the device.
+///
+/// Each output has a master volume, mute, and solo — the "bottom row"
+/// in TotalMix. Inputs and playbacks route INTO these outputs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OutputChannel {
+    pub id: usize,
+    pub name: String,
+    /// Master volume for this output (0.0 – 1.0).
+    pub volume: f32,
+    pub mute: bool,
+    pub solo: bool,
 }
 
 impl InputChannel {
-    /// Create a new input channel with default values for `outputs` output pairs.
     pub fn new(id: usize, name: &str, channel_type: ChannelType, outputs: usize) -> Self {
         Self {
             id,
@@ -71,18 +85,33 @@ impl InputChannel {
             phantom: false,
             pad: false,
             sensitivity: None,
+            mute: false,
+            solo: false,
         }
     }
 }
 
 impl PlaybackChannel {
-    /// Create a new playback channel with default values for `outputs` output pairs.
     pub fn new(id: usize, name: &str, outputs: usize) -> Self {
         Self {
             id,
             name: name.to_string(),
             volumes: vec![0.8; outputs],
             pans: vec![0; outputs],
+            mute: false,
+            solo: false,
+        }
+    }
+}
+
+impl OutputChannel {
+    pub fn new(id: usize, name: &str) -> Self {
+        Self {
+            id,
+            name: name.to_string(),
+            volume: 1.0,
+            mute: false,
+            solo: false,
         }
     }
 }

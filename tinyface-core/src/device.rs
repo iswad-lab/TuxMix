@@ -1,4 +1,4 @@
-use crate::channel::{ChannelId, InputChannel, PlaybackChannel};
+use crate::channel::{ChannelId, InputChannel, OutputChannel, PlaybackChannel};
 use crate::error::Error;
 use crate::scene::Scene;
 
@@ -46,6 +46,12 @@ pub trait RmeDevice {
     /// Returns a mutable reference to all software playback channels.
     fn playbacks_mut(&mut self) -> &mut [PlaybackChannel];
 
+    /// Returns a reference to all physical output channels.
+    fn outputs(&self) -> &[OutputChannel];
+
+    /// Returns a mutable reference to all physical output channels.
+    fn outputs_mut(&mut self) -> &mut [OutputChannel];
+
     /// Returns the current global device settings.
     fn settings(&self) -> &DeviceSettings;
 
@@ -65,6 +71,20 @@ pub trait RmeDevice {
 
     /// Get the pan (-100 .. 100) for a given channel into a specific output pair.
     fn pan(&self, channel: ChannelId, output: usize) -> Result<i8, Error>;
+
+    // ── Mute / Solo ────────────────────────────────────────────────
+
+    /// Set mute state for a channel.
+    fn set_mute(&mut self, channel: ChannelId, mute: bool) -> Result<(), Error>;
+
+    /// Get mute state for a channel.
+    fn mute(&self, channel: ChannelId) -> Result<bool, Error>;
+
+    /// Set solo state for a channel.
+    fn set_solo(&mut self, channel: ChannelId, solo: bool) -> Result<(), Error>;
+
+    /// Get solo state for a channel.
+    fn solo(&self, channel: ChannelId) -> Result<bool, Error>;
 
     // ── Scene / snapshot ────────────────────────────────────────
 

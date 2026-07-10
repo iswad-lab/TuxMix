@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::channel::{InputChannel, PlaybackChannel};
+use crate::channel::{InputChannel, OutputChannel, PlaybackChannel};
 use crate::device::DeviceSettings;
 
 /// A snapshot of the full device state, serializable for
@@ -16,6 +16,9 @@ pub struct Scene {
     /// Software playback channels.
     pub playbacks: Vec<PlaybackChannel>,
 
+    /// Physical output channels.
+    pub outputs: Vec<OutputChannel>,
+
     /// Global device-level settings.
     pub settings: DeviceSettings,
 }
@@ -26,6 +29,7 @@ impl Scene {
             name: name.to_string(),
             inputs: Vec::new(),
             playbacks: Vec::new(),
+            outputs: Vec::new(),
             settings: DeviceSettings {
                 clock_source: "Internal".into(),
                 spdif_optical: false,

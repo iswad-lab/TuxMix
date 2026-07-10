@@ -58,10 +58,9 @@ const OUTPUT_NAMES: [(&str, &str); OUTPUT_PAIRS] = [
 pub struct MockBabyfacePro {
     inputs: Vec<InputChannel>,
     playbacks: Vec<PlaybackChannel>,
+    outputs: Vec<OutputChannel>,
     settings: DeviceSettings,
-    /// Simulated VU levels for each input channel (0.0 – 1.0).
     input_meters: Vec<f32>,
-    /// Simulated VU levels for each playback channel (0.0 – 1.0).
     playback_meters: Vec<f32>,
     tick: u64,
 }
@@ -86,7 +85,7 @@ impl MockBabyfacePro {
 
     fn build_playbacks() -> Vec<PlaybackChannel> {
         let mut pbs = Vec::new();
-        for (i, (l, _r)) in OUTPUT_NAMES.iter().enumerate() {
+        for (i, (l, r)) in OUTPUT_NAMES.iter().enumerate() {
             pbs.push(PlaybackChannel::new(
                 i * 2,
                 &format!("PCM {}", l),
@@ -94,11 +93,20 @@ impl MockBabyfacePro {
             ));
             pbs.push(PlaybackChannel::new(
                 i * 2 + 1,
-                &format!("PCM {}", _r),
+                &format!("PCM {}", r),
                 OUTPUT_PAIRS,
             ));
         }
         pbs
+    }
+
+    fn build_outputs() -> Vec<OutputChannel> {
+        let mut outs = Vec::new();
+        for (i, (l, r)) in OUTPUT_NAMES.iter().enumerate() {
+            outs.push(OutputChannel::new(i * 2, &format!("OUT {}", l)));
+            outs.push(OutputChannel::new(i * 2 + 1, &format!("OUT {}", r)));
+        }
+        outs
     }
 
     fn update_meters(&mut self) {
@@ -132,6 +140,46 @@ impl MockBabyfacePro {
     pub fn playback_meters(&self) -> &[f32] {
         &self.playback_meters
     }
+
+    fn channel(&self, ch: ChannelId) -> Result<(&bool, &bool), Error> {
+        match ch {
+            ChannelId::Input(idx) => self
+                .inputs
+                .get(idx)
+                .map(|c| (&c.mute, &c.solo))
+                .ok_or_else(|| Error::InvalidChannel(format!("Input {}", idx))),
+            ChannelId::Playback(idx) => self
+                .playbacks
+                .get(idx)
+                .map(|c| (&c.mute, &c.solo))
+                .ok_or_else(|| Error::InvalidChannel(format!("Playback {}", idx))),
+            ChannelId::Output(idx) => self
+                .outputs
+                .get(idx)
+                .map(|c| (&c.mute, &c.solo))
+                .ok_or_else(|| Error::InvalidChannel(format!("Output {}", idx))),
+        }
+    }
+
+    fn channel_mut(&mut self, ch: ChannelId) -> Result<(&mut bool, &mut bool), Error> {
+        match ch {
+            ChannelId::Input(idx) => self
+                .inputs
+                .get_mut(idx)
+                .map(|c| (&mut c.mute, &mut c.solo))
+                .ok_or_else(|| Error::InvalidChannel(format!("Input {}", idx))),
+            ChannelId::Playback(idx) => self
+                .playbacks
+                .get_mut(idx)
+                .map(|c| (&mut c.mute, &mut c.solo))
+                .ok_or_else(|| Error::InvalidChannel(format!("Playback {}", idx))),
+            ChannelId::Output(idx) => self
+                .outputs
+                .get_mut(idx)
+                .map(|c| (&mut c.mute, &mut c.solo))
+                .ok_or_else(|| Error::InvalidChannel(format!("Output {}", idx))),
+        }
+    }
 }
 
 impl RmeDevice for MockBabyfacePro {
@@ -147,6 +195,7 @@ impl RmeDevice for MockBabyfacePro {
         Ok(Self {
             inputs: Self::build_inputs(),
             playbacks: Self::build_playbacks(),
+            outputs: Self::build_outputs(),
             settings: DeviceSettings {
                 clock_source: "Internal".into(),
                 spdif_optical: false,
@@ -175,6 +224,14 @@ impl RmeDevice for MockBabyfacePro {
         &mut self.playbacks
     }
 
+    fn outputs(&self) -> &[OutputChannel] {
+        &self.outputs
+    }
+
+    fn outputs_mut(&mut self) -> &mut [OutputChannel] {
+        &mut self.outputs
+    }
+
     fn settings(&self) -> &DeviceSettings {
         &self.settings
     }
@@ -191,20 +248,27 @@ impl RmeDevice for MockBabyfacePro {
                     .inputs
                     .get_mut(idx)
                     .ok_or_else(|| Error::InvalidChannel(format!("Input {}", idx)))?;
-                if output >= ch.volumes.len() {
-                    return Err(Error::InvalidChannel(format!("Output {}", output)));
-                }
-                ch.volumes[output] = vol;
+                ch.volumes
+                    .get_mut(output)
+                    .map(|v| *v = vol)
+                    .ok_or_else(|| Error::InvalidChannel(format!("Output {}", output)))?;
             }
             ChannelId::Playback(idx) => {
                 let ch = self
                     .playbacks
                     .get_mut(idx)
                     .ok_or_else(|| Error::InvalidChannel(format!("Playback {}", idx)))?;
-                if output >= ch.volumes.len() {
-                    return Err(Error::InvalidChannel(format!("Output {}", output)));
-                }
-                ch.volumes[output] = vol;
+                ch.volumes
+                    .get_mut(output)
+                    .map(|v| *v = vol)
+                    .ok_or_else(|| Error::InvalidChannel(format!("Output {}", output)))?;
+            }
+            ChannelId::Output(idx) => {
+                let ch = self
+                    .outputs
+                    .get_mut(idx)
+                    .ok_or_else(|| Error::InvalidChannel(format!("Output {}", idx)))?;
+                ch.volume = vol;
             }
         }
         Ok(())
@@ -212,26 +276,21 @@ impl RmeDevice for MockBabyfacePro {
 
     fn volume(&self, channel: ChannelId, output: usize) -> Result<f32, Error> {
         match channel {
-            ChannelId::Input(idx) => {
-                let ch = self
-                    .inputs
-                    .get(idx)
-                    .ok_or_else(|| Error::InvalidChannel(format!("Input {}", idx)))?;
-                ch.volumes
-                    .get(output)
-                    .copied()
-                    .ok_or_else(|| Error::InvalidChannel(format!("Output {}", output)))
-            }
-            ChannelId::Playback(idx) => {
-                let ch = self
-                    .playbacks
-                    .get(idx)
-                    .ok_or_else(|| Error::InvalidChannel(format!("Playback {}", idx)))?;
-                ch.volumes
-                    .get(output)
-                    .copied()
-                    .ok_or_else(|| Error::InvalidChannel(format!("Output {}", output)))
-            }
+            ChannelId::Input(idx) => self
+                .inputs
+                .get(idx)
+                .and_then(|c| c.volumes.get(output).copied())
+                .ok_or_else(|| Error::InvalidChannel(format!("Channel {}", idx))),
+            ChannelId::Playback(idx) => self
+                .playbacks
+                .get(idx)
+                .and_then(|c| c.volumes.get(output).copied())
+                .ok_or_else(|| Error::InvalidChannel(format!("Channel {}", idx))),
+            ChannelId::Output(idx) => self
+                .outputs
+                .get(idx)
+                .map(|c| c.volume)
+                .ok_or_else(|| Error::InvalidChannel(format!("Output {}", idx))),
         }
     }
 
@@ -258,33 +317,47 @@ impl RmeDevice for MockBabyfacePro {
                 }
                 ch.pans[output] = pan;
             }
+            ChannelId::Output(_) => return Err(Error::InvalidChannel("Output has no pan".into())),
         }
         Ok(())
     }
 
     fn pan(&self, channel: ChannelId, output: usize) -> Result<i8, Error> {
         match channel {
-            ChannelId::Input(idx) => {
-                let ch = self
-                    .inputs
-                    .get(idx)
-                    .ok_or_else(|| Error::InvalidChannel(format!("Input {}", idx)))?;
-                ch.pans
-                    .get(output)
-                    .copied()
-                    .ok_or_else(|| Error::InvalidChannel(format!("Output {}", output)))
-            }
-            ChannelId::Playback(idx) => {
-                let ch = self
-                    .playbacks
-                    .get(idx)
-                    .ok_or_else(|| Error::InvalidChannel(format!("Playback {}", idx)))?;
-                ch.pans
-                    .get(output)
-                    .copied()
-                    .ok_or_else(|| Error::InvalidChannel(format!("Output {}", output)))
-            }
+            ChannelId::Input(idx) => self
+                .inputs
+                .get(idx)
+                .and_then(|c| c.pans.get(output).copied())
+                .ok_or_else(|| Error::InvalidChannel(format!("Channel {}", idx))),
+            ChannelId::Playback(idx) => self
+                .playbacks
+                .get(idx)
+                .and_then(|c| c.pans.get(output).copied())
+                .ok_or_else(|| Error::InvalidChannel(format!("Channel {}", idx))),
+            ChannelId::Output(_) => Err(Error::InvalidChannel("Output has no pan".into())),
         }
+    }
+
+    fn set_mute(&mut self, channel: ChannelId, mute: bool) -> Result<(), Error> {
+        let ch = self.channel_mut(channel)?;
+        *ch.0 = mute;
+        Ok(())
+    }
+
+    fn mute(&self, channel: ChannelId) -> Result<bool, Error> {
+        let ch = self.channel(channel)?;
+        Ok(*ch.0)
+    }
+
+    fn set_solo(&mut self, channel: ChannelId, solo: bool) -> Result<(), Error> {
+        let ch = self.channel_mut(channel)?;
+        *ch.1 = solo;
+        Ok(())
+    }
+
+    fn solo(&self, channel: ChannelId) -> Result<bool, Error> {
+        let ch = self.channel(channel)?;
+        Ok(*ch.1)
     }
 
     fn capture_scene(&self) -> Scene {
@@ -292,6 +365,7 @@ impl RmeDevice for MockBabyfacePro {
             name: "Untitled".into(),
             inputs: self.inputs.clone(),
             playbacks: self.playbacks.clone(),
+            outputs: self.outputs.clone(),
             settings: self.settings.clone(),
         }
     }
@@ -299,6 +373,7 @@ impl RmeDevice for MockBabyfacePro {
     fn apply_scene(&mut self, scene: &Scene) -> Result<(), Error> {
         self.inputs = scene.inputs.clone();
         self.playbacks = scene.playbacks.clone();
+        self.outputs = scene.outputs.clone();
         self.settings = scene.settings.clone();
         Ok(())
     }
@@ -417,6 +492,39 @@ mod tests {
         for v in dev.playback_meters() {
             assert!(*v >= 0.0 && *v <= 1.0, "Meter {} out of range", v);
         }
+    }
+
+    #[test]
+    fn test_mute_solo_toggle() {
+        let mut dev = MockBabyfacePro::open().unwrap();
+        assert!(!dev.mute(ChannelId::Input(0)).unwrap());
+        assert!(!dev.solo(ChannelId::Playback(0)).unwrap());
+
+        dev.set_mute(ChannelId::Input(0), true).unwrap();
+        assert!(dev.mute(ChannelId::Input(0)).unwrap());
+        assert!(!dev.mute(ChannelId::Input(1)).unwrap()); // other channel unchanged
+
+        dev.set_solo(ChannelId::Playback(0), true).unwrap();
+        assert!(dev.solo(ChannelId::Playback(0)).unwrap());
+
+        dev.set_mute(ChannelId::Input(99), true).unwrap_err();
+        dev.set_solo(ChannelId::Playback(99), true).unwrap_err();
+    }
+
+    #[test]
+    fn test_mute_solo_in_scene() {
+        let mut dev = MockBabyfacePro::open().unwrap();
+        dev.set_mute(ChannelId::Input(0), true).unwrap();
+        dev.set_solo(ChannelId::Playback(0), true).unwrap();
+
+        let scene = dev.capture_scene();
+        assert!(scene.inputs[0].mute);
+        assert!(scene.playbacks[0].solo);
+
+        let mut dev2 = MockBabyfacePro::open().unwrap();
+        dev2.apply_scene(&scene).unwrap();
+        assert!(dev2.mute(ChannelId::Input(0)).unwrap());
+        assert!(dev2.solo(ChannelId::Playback(0)).unwrap());
     }
 
     #[test]
