@@ -55,21 +55,56 @@ pub fn top_bar(_theme: &iced::Theme) -> container::Style {
 }
 
 /// A small square toggle button (M / S / 48V / PAD) that lights up `active_color`
-/// when `active`, and stays flat/bordered otherwise.
+/// when `active` — with a soft glow to sell the "lit" look — and responds to
+/// hover when inactive so it reads as clickable before you ever press it.
 pub fn toggle_button(
     active: bool,
     active_color: Color,
 ) -> impl Fn(&iced::Theme, button::Status) -> button::Style {
-    move |_theme, _status| button::Style {
-        background: Some(Background::Color(if active { active_color } else { BG_DEEP })),
-        text_color: if active { ON_ACTIVE } else { TEXT_SEC },
-        border: Border {
-            color: if active { active_color } else { BORDER },
-            width: 1.0,
-            radius: 4.0.into(),
-        },
-        shadow: Shadow::default(),
-        snap: false,
+    move |_theme, status| {
+        let hovered = matches!(
+            status,
+            button::Status::Hovered | button::Status::Pressed
+        );
+
+        let background = if active {
+            active_color
+        } else if hovered {
+            SURFACE
+        } else {
+            BG_DEEP
+        };
+        let border_color = if active {
+            active_color
+        } else if hovered {
+            FADER
+        } else {
+            BORDER
+        };
+        let shadow = if active {
+            Shadow {
+                color: Color {
+                    a: 0.45,
+                    ..active_color
+                },
+                offset: iced::Vector::new(0.0, 0.0),
+                blur_radius: 6.0,
+            }
+        } else {
+            Shadow::default()
+        };
+
+        button::Style {
+            background: Some(Background::Color(background)),
+            text_color: if active { ON_ACTIVE } else { TEXT_SEC },
+            border: Border {
+                color: border_color,
+                width: 1.0,
+                radius: 4.0.into(),
+            },
+            shadow,
+            snap: false,
+        }
     }
 }
 

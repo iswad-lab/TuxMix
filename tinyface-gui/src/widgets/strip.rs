@@ -43,14 +43,14 @@ pub fn strip<'a>(p: StripParams<'a>) -> Element<'a, Message> {
         header = header.push(text(tag).color(color).size(9));
     }
 
-    let mute_btn = button(text("M").size(9))
-        .width(28)
-        .height(16)
+    let mute_btn = button(text("M").size(10))
+        .width(30)
+        .height(18)
         .style(theme::toggle_button(p.mute, theme::MUTE_COLOR))
         .on_press(Message::Mute(cid, !p.mute));
-    let solo_btn = button(text("S").size(9))
-        .width(28)
-        .height(16)
+    let solo_btn = button(text("S").size(10))
+        .width(30)
+        .height(18)
         .style(theme::toggle_button(p.solo, theme::SOLO_COLOR))
         .on_press(Message::Solo(cid, !p.solo));
     let ms_row = row![mute_btn, solo_btn].spacing(2);
@@ -62,18 +62,18 @@ pub fn strip<'a>(p: StripParams<'a>) -> Element<'a, Message> {
             let mut tg_row = row![].spacing(2);
             if p.has_48v {
                 tg_row = tg_row.push(
-                    button(text("48V").size(9))
-                        .width(35)
-                        .height(16)
+                    button(text("48V").size(10))
+                        .width(37)
+                        .height(18)
                         .style(theme::toggle_button(p.phantom, theme::PHANTOM))
                         .on_press(Message::Phantom(idx, !p.phantom)),
                 );
             }
             if p.has_pad {
                 tg_row = tg_row.push(
-                    button(text("PAD").size(9))
-                        .width(35)
-                        .height(16)
+                    button(text("PAD").size(10))
+                        .width(37)
+                        .height(18)
                         .style(theme::toggle_button(p.pad, theme::ACCENT))
                         .on_press(Message::Pad(idx, !p.pad)),
                 );
@@ -102,6 +102,7 @@ pub fn strip<'a>(p: StripParams<'a>) -> Element<'a, Message> {
         text_input("", p.edit_buf)
             .on_input(Message::EditChanged)
             .on_submit(Message::EditCommit)
+            .style(theme::text_input)
             .size(10)
             .width(Length::Fixed(64.0))
             .into()
