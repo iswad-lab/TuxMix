@@ -341,6 +341,20 @@ pub fn view(state: &TinyFace) -> Element<'_, Message> {
     column![top, content].into()
 }
 
+/// A section label (HARDWARE INPUTS, SOFTWARE PLAYBACK, ...) with an accent
+/// tick and a rule trailing off to the right, instead of bare gray text that
+/// blends into the background.
+fn section_header(label: &str) -> Element<'_, Message> {
+    row![
+        container(iced::widget::Space::new().width(3).height(12)).style(theme::accent_bar),
+        text(label).color(theme::TEXT_PRIMARY).size(11),
+        iced::widget::rule::horizontal(1),
+    ]
+    .spacing(8)
+    .align_y(iced::Alignment::Center)
+    .into()
+}
+
 /// Wraps a cluster of related controls in a recessed "chip" so the top bar
 /// reads as grouped sections instead of one long undifferentiated row.
 fn chip<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
@@ -547,7 +561,7 @@ fn mixer_view(state: &TinyFace) -> Element<'_, Message> {
     }
 
     let body = column![
-        text("HARDWARE INPUTS").color(theme::TEXT_SEC).size(11),
+        section_header("HARDWARE INPUTS"),
         text(format!(
             "Submix: {} - Tab for Matrix",
             OUT_LABELS[state.sel_out]
@@ -557,11 +571,11 @@ fn mixer_view(state: &TinyFace) -> Element<'_, Message> {
         scrollable(input_strips).direction(scrollable::Direction::Horizontal(
             scrollable::Scrollbar::default()
         )),
-        text("SOFTWARE PLAYBACK").color(theme::TEXT_SEC).size(11),
+        section_header("SOFTWARE PLAYBACK"),
         scrollable(pb_strips).direction(scrollable::Direction::Horizontal(
             scrollable::Scrollbar::default()
         )),
-        text("HARDWARE OUTPUTS").color(theme::TEXT_SEC).size(11),
+        section_header("HARDWARE OUTPUTS"),
         scrollable(out_strips).direction(scrollable::Direction::Horizontal(
             scrollable::Scrollbar::default()
         )),
@@ -578,7 +592,7 @@ fn mixer_view(state: &TinyFace) -> Element<'_, Message> {
 
 fn matrix_view(state: &TinyFace) -> Element<'_, Message> {
     let body = column![
-        text("MATRIX MIXER").color(theme::TEXT_SEC).size(11),
+        section_header("MATRIX MIXER"),
         text("Volume per input per output - Tab to return")
             .color(theme::TEXT_SEC)
             .size(10),

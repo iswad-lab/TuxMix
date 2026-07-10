@@ -126,6 +126,18 @@ pub fn plain_button(_theme: &iced::Theme, status: button::Status) -> button::Sty
     }
 }
 
+/// The small colored tick to the left of a section header label.
+pub fn accent_bar(_theme: &iced::Theme) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(ACCENT)),
+        border: Border {
+            radius: 1.0.into(),
+            ..Border::default()
+        },
+        ..container::Style::default()
+    }
+}
+
 /// A recessed group container — used to visually cluster related top-bar
 /// controls (e.g. the scene name/save/load trio) against the flatter
 /// top-bar background.
