@@ -431,3 +431,56 @@ where
         .height(Length::Fixed(height))
         .into()
 }
+
+const PAN_W: f32 = 44.0;
+const PAN_H: f32 = 12.0;
+const PAN_DOT_R: f32 = 2.75;
+
+/// A small static readout: a groove with a dot marking where the pan sits,
+/// instead of bare "L20"/"R20" text.
+struct PanIndicator {
+    pan: i8,
+}
+
+impl<Message> canvas::Program<Message> for PanIndicator {
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &(),
+        renderer: &Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<Geometry> {
+        let mut frame = Frame::new(renderer, bounds.size());
+        let cy = bounds.height / 2.0;
+        let cx = bounds.width / 2.0;
+
+        let groove = Path::line(Point::new(2.0, cy), Point::new(bounds.width - 2.0, cy));
+        frame.stroke(
+            &groove,
+            Stroke::default().with_color(theme::BORDER).with_width(1.5),
+        );
+
+        let tick = Path::line(Point::new(cx, cy - 3.0), Point::new(cx, cy + 3.0));
+        frame.stroke(
+            &tick,
+            Stroke::default().with_color(theme::TEXT_SEC).with_width(1.0),
+        );
+
+        let t = (self.pan as f32 / 100.0).clamp(-1.0, 1.0);
+        let usable = cx - PAN_DOT_R - 2.0;
+        let dot_x = cx + t * usable;
+        frame.fill(&Path::circle(Point::new(dot_x, cy), PAN_DOT_R), theme::ACCENT);
+
+        vec![frame.into_geometry()]
+    }
+}
+
+pub fn pan_indicator<'a, Message: 'a>(pan: i8) -> Element<'a, Message> {
+    Canvas::new(PanIndicator { pan })
+        .width(Length::Fixed(PAN_W))
+        .height(Length::Fixed(PAN_H))
+        .into()
+}

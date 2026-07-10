@@ -8,7 +8,7 @@ use tinyface_core::ChannelId;
 
 use crate::app::{db_text, short_label, Message};
 use crate::theme;
-use crate::widgets::fader::{fader, Fader};
+use crate::widgets::fader::{fader, pan_indicator, Fader};
 
 const FADER_H: f32 = 150.0;
 const STRIP_W: f32 = 108.0;
@@ -124,7 +124,14 @@ pub fn strip<'a>(p: StripParams<'a>) -> Element<'a, Message> {
         } else {
             format!("R{}", p.pan)
         };
-        rows = rows.push(text(pan_str).color(theme::ACCENT).size(9));
+        rows = rows.push(
+            column![
+                pan_indicator(p.pan),
+                text(pan_str).color(theme::TEXT_SEC).size(8),
+            ]
+            .spacing(1)
+            .align_x(iced::Alignment::Center),
+        );
     }
 
     container(

@@ -29,6 +29,12 @@ pub fn type_tag(t: ChannelType) -> (&'static str, iced::Color) {
     }
 }
 
+/// Tag colors for the bus rows (not real `ChannelType`s, so not part of
+/// `type_tag`) — kept distinct from the input-type palette above so PB/OUT
+/// don't just blend into the secondary-text gray everything else uses.
+pub const PB_TAG: iced::Color = iced::Color::from_rgb8(0x4d, 0xb6, 0xac);
+pub const OUT_TAG: iced::Color = iced::Color::from_rgb8(0x81, 0xc7, 0x84);
+
 pub fn parse_db_input(s: &str) -> Option<f32> {
     let raw = s.trim().to_lowercase();
     if raw.is_empty() || raw == "-inf" || raw == "-\u{221e}" {
@@ -513,7 +519,7 @@ fn mixer_view(state: &TinyFace) -> Element<'_, Message> {
             cid,
             output_idx: state.sel_out,
             name: ch.name.clone(),
-            type_tag: Some(("PB", theme::TEXT_SEC)),
+            type_tag: Some(("PB", PB_TAG)),
             vol: ch.volumes[state.sel_out],
             pan: ch.pans[state.sel_out],
             meter,
@@ -542,7 +548,7 @@ fn mixer_view(state: &TinyFace) -> Element<'_, Message> {
             cid,
             output_idx: state.sel_out,
             name: ch.name.clone(),
-            type_tag: Some(("OUT", theme::TEXT_SEC)),
+            type_tag: Some(("OUT", OUT_TAG)),
             vol: ch.volume,
             pan: 0,
             meter: 0.0,
