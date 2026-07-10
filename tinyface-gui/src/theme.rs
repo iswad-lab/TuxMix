@@ -199,6 +199,15 @@ pub fn pick_list(
     }
 }
 
+/// The default 10px scrollbar/scroller reads chunky next to everything
+/// else we've thinned down — 4px is still comfortably grabbable but looks
+/// modern rather than like default browser chrome.
+pub fn thin_scrollbar() -> iced::widget::scrollable::Scrollbar {
+    iced::widget::scrollable::Scrollbar::new()
+        .width(4)
+        .scroller_width(4)
+}
+
 /// A thin, minimal scrollbar rail — the scroller brightens on hover/drag
 /// instead of the default Iced chrome, matching the rest of the app.
 pub fn scrollable(

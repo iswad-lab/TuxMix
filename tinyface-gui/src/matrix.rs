@@ -63,7 +63,7 @@ pub fn view(state: &TinyFace) -> Element<'_, Message> {
 
     let scroller = scrollable(cols)
         .direction(scrollable::Direction::Horizontal(
-            scrollable::Scrollbar::default(),
+            theme::thin_scrollbar(),
         ))
         .style(theme::scrollable);
 

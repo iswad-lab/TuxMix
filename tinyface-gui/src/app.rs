@@ -576,19 +576,19 @@ fn mixer_view(state: &TinyFace) -> Element<'_, Message> {
         .size(10),
         scrollable(input_strips)
             .direction(scrollable::Direction::Horizontal(
-                scrollable::Scrollbar::default()
+                theme::thin_scrollbar()
             ))
             .style(theme::scrollable),
         section_header("SOFTWARE PLAYBACK"),
         scrollable(pb_strips)
             .direction(scrollable::Direction::Horizontal(
-                scrollable::Scrollbar::default()
+                theme::thin_scrollbar()
             ))
             .style(theme::scrollable),
         section_header("HARDWARE OUTPUTS"),
         scrollable(out_strips)
             .direction(scrollable::Direction::Horizontal(
-                scrollable::Scrollbar::default()
+                theme::thin_scrollbar()
             ))
             .style(theme::scrollable),
     ]
