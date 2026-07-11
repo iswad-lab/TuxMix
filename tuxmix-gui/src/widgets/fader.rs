@@ -457,6 +457,39 @@ where
         .into()
 }
 
+/// The meter+ruler column on its own, with no track/cap and no mouse
+/// interaction at all — for a collapsed strip, which trades every control
+/// (fader, mute/solo, pan) for a glance-only level readout.
+struct VuMeter {
+    level: f32,
+}
+
+impl<Message> canvas::Program<Message> for VuMeter {
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &(),
+        renderer: &Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<Geometry> {
+        let mut frame = Frame::new(renderer, bounds.size());
+        let meter_rect = Rectangle::new(Point::ORIGIN, Size::new(METER_RULER_W, bounds.height));
+        draw_meter(&mut frame, meter_rect, self.level);
+        draw_ruler(&mut frame, meter_rect);
+        vec![frame.into_geometry()]
+    }
+}
+
+pub fn vu_meter<'a, Message: 'a>(level: f32, height: f32) -> Element<'a, Message> {
+    Canvas::new(VuMeter { level })
+        .width(Length::Fixed(METER_RULER_W))
+        .height(Length::Fixed(height))
+        .into()
+}
+
 const PAN_W: f32 = 44.0;
 const PAN_H: f32 = 12.0;
 const PAN_DOT_R: f32 = 2.75;
