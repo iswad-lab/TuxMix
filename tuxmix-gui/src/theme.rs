@@ -23,6 +23,30 @@ pub const MUTE_COLOR: Color = Color::from_rgb8(0xff, 0x6b, 0x6b);
 pub const SOLO_COLOR: Color = Color::from_rgb8(0xff, 0xc1, 0x07);
 pub const ON_ACTIVE: Color = Color::from_rgb8(0x1a, 0x08, 0x08);
 
+// ── Type scale ───────────────────────────────────────────────────
+// Every text element in the app maps to one of these six tiers rather
+// than a one-off pixel value chosen per call site — before this there
+// were eight near-random sizes (6.5, 8, 9, 10, 11, 12, 13, 20) with no
+// clear reason two of them (8 vs 9, 11 vs 12) were ever different.
+
+/// Canvas-drawn ruler tick labels on the fader — the smallest legible
+/// size, only used where the fader canvas has no room for anything
+/// bigger.
+pub const TEXT_MICRO: f32 = 7.0;
+/// Tertiary annotations: type tags, dB readouts, the pan L/R/C label,
+/// matrix-view row/column labels.
+pub const TEXT_XS: f32 = 9.0;
+/// Buttons and compact controls: M/S, 48V/PAD, the collapse toggle,
+/// the dB edit input.
+pub const TEXT_SM: f32 = 10.0;
+/// Default body text: channel names, section headers, top-bar labels
+/// and pick lists.
+pub const TEXT_MD: f32 = 11.0;
+/// Emphasis: the connected device's model name in the top bar.
+pub const TEXT_LG: f32 = 13.0;
+/// The "TuxMix" wordmark.
+pub const TEXT_XL: f32 = 20.0;
+
 pub fn panel(_theme: &iced::Theme) -> container::Style {
     container::Style {
         background: Some(Background::Color(SURFACE)),

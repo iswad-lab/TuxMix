@@ -90,11 +90,14 @@ impl<Message> Fader<Message> {
 pub struct State {
     dragging: bool,
     last_click: Option<Instant>,
-    /// (cursor Y, t) captured when a shift-drag starts. Subsequent moves
-    /// apply a scaled-down relative delta from this anchor rather than an
-    /// absolute cursor-to-value mapping, so the cap deliberately lags the
-    /// cursor instead of tracking it 1:1 — see `FINE_SENSITIVITY`.
-    fine_anchor: Option<(f32, f32)>,
+    /// Last cursor Y seen during an active drag. Each move applies the
+    /// delta since this point (scaled by `FINE_SENSITIVITY` while Shift is
+    /// held) rather than an absolute cursor-to-value mapping, and is
+    /// re-read fresh every move — so Shift can be pressed or released
+    /// mid-drag and the cap keeps going from wherever it already was,
+    /// instead of jumping (which a fixed press-time anchor, or falling
+    /// back to absolute cursor tracking, would both cause).
+    drag_pos: Option<f32>,
 }
 
 impl<Message> canvas::Program<Message> for Fader<Message> {
@@ -125,17 +128,14 @@ impl<Message> canvas::Program<Message> for Fader<Message> {
                 if is_double {
                     state.dragging = false;
                     state.last_click = None;
-                    state.fine_anchor = None;
+                    state.drag_pos = None;
                     return Some(canvas::Action::publish((self.on_reset)()).and_capture());
                 }
                 state.last_click = Some(now);
                 state.dragging = true;
 
                 let value = locate(pos.y);
-                state.fine_anchor = self
-                    .modifiers
-                    .shift()
-                    .then_some((pos.y, vol_to_t(value)));
+                state.drag_pos = Some(pos.y);
                 Some(canvas::Action::publish((self.on_press)(value, None)).and_capture())
             }
             canvas::Event::Mouse(mouse::Event::CursorMoved { .. }) => {
@@ -143,21 +143,23 @@ impl<Message> canvas::Program<Message> for Fader<Message> {
                     return None;
                 }
                 let pos = cursor.land().position()?;
-                let value = if let Some((anchor_y, anchor_t)) = state.fine_anchor {
-                    let screen_dt = -(pos.y - anchor_y) / bounds.height;
-                    let t = (anchor_t + screen_dt * FINE_SENSITIVITY).clamp(0.0, 1.0);
-                    t_to_vol(t)
+                let prev_y = state.drag_pos.unwrap_or(pos.y);
+                let screen_dt = -(pos.y - prev_y) / bounds.height;
+                let mult = if self.modifiers.shift() {
+                    FINE_SENSITIVITY
                 } else {
-                    locate(pos.y)
+                    1.0
                 };
-                Some(canvas::Action::publish((self.on_drag)(value)).and_capture())
+                let t = (vol_to_t(self.value) + screen_dt * mult).clamp(0.0, 1.0);
+                state.drag_pos = Some(pos.y);
+                Some(canvas::Action::publish((self.on_drag)(t_to_vol(t))).and_capture())
             }
             canvas::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                 if !state.dragging {
                     return None;
                 }
                 state.dragging = false;
-                state.fine_anchor = None;
+                state.drag_pos = None;
                 Some(canvas::Action::publish((self.on_release)()).and_capture())
             }
             canvas::Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
@@ -433,7 +435,7 @@ fn draw_ruler(frame: &mut Frame, r: Rectangle) {
             content: label,
             position: Point::new(x0 + 5.0, y - 4.0),
             color: label_color,
-            size: 6.5.into(),
+            size: theme::TEXT_MICRO.into(),
             ..canvas::Text::default()
         });
     }
@@ -459,18 +461,129 @@ const PAN_W: f32 = 44.0;
 const PAN_H: f32 = 12.0;
 const PAN_DOT_R: f32 = 2.75;
 
-/// A small static readout: a groove with a dot marking where the pan sits,
-/// instead of bare "L20"/"R20" text.
-struct PanIndicator {
-    pan: i8,
+/// A groove with a dot marking where the pan sits — click/drag horizontally
+/// to set it, shift-drag for a fine (reduced-sensitivity) adjustment,
+/// scroll-wheel to nudge, double-click to reset to center. Mirrors the
+/// fader's own press/drag/wheel/reset interaction, just on the x axis and
+/// over a linear (not dB-tapered) range.
+pub struct PanIndicator<Message> {
+    pub pan: i8,
+    pub modifiers: Modifiers,
+    pub on_change: Box<dyn Fn(i8) -> Message>,
+    pub on_reset: Box<dyn Fn() -> Message>,
 }
 
-impl<Message> canvas::Program<Message> for PanIndicator {
-    type State = ();
+#[derive(Default)]
+pub struct PanState {
+    dragging: bool,
+    last_click: Option<Instant>,
+    /// Last cursor X seen during an active drag — see `Fader::State::drag_pos`
+    /// for why this is re-read fresh every move instead of a fixed anchor.
+    drag_pos: Option<f32>,
+}
+
+fn pan_usable_width(bounds_width: f32) -> f32 {
+    bounds_width / 2.0 - PAN_DOT_R - 2.0
+}
+
+fn pan_to_t(pan: i8) -> f32 {
+    (pan as f32 / 100.0).clamp(-1.0, 1.0)
+}
+
+fn t_to_pan(t: f32) -> i8 {
+    (t.clamp(-1.0, 1.0) * 100.0).round() as i8
+}
+
+fn locate_pan(x: f32, bounds: Rectangle) -> i8 {
+    let cx = bounds.x + bounds.width / 2.0;
+    let usable = pan_usable_width(bounds.width);
+    let t = (x - cx) / usable;
+    t_to_pan(t)
+}
+
+impl<Message> canvas::Program<Message> for PanIndicator<Message> {
+    type State = PanState;
+
+    fn update(
+        &self,
+        state: &mut PanState,
+        event: &canvas::Event,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+    ) -> Option<canvas::Action<Message>> {
+        match event {
+            canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+                let pos = cursor.position_over(bounds)?;
+                let now = Instant::now();
+                let is_double = state
+                    .last_click
+                    .is_some_and(|t| now.duration_since(t) < DOUBLE_CLICK);
+
+                if is_double {
+                    state.dragging = false;
+                    state.last_click = None;
+                    state.drag_pos = None;
+                    return Some(canvas::Action::publish((self.on_reset)()).and_capture());
+                }
+                state.last_click = Some(now);
+                state.dragging = true;
+
+                let pan = locate_pan(pos.x, bounds);
+                state.drag_pos = Some(pos.x);
+                Some(canvas::Action::publish((self.on_change)(pan)).and_capture())
+            }
+            canvas::Event::Mouse(mouse::Event::CursorMoved { .. }) => {
+                if !state.dragging {
+                    return None;
+                }
+                let pos = cursor.land().position()?;
+                let prev_x = state.drag_pos.unwrap_or(pos.x);
+                let screen_dt = (pos.x - prev_x) / bounds.width;
+                let mult = if self.modifiers.shift() {
+                    FINE_SENSITIVITY
+                } else {
+                    1.0
+                };
+                let t = pan_to_t(self.pan) + screen_dt * mult;
+                state.drag_pos = Some(pos.x);
+                Some(canvas::Action::publish((self.on_change)(t_to_pan(t))).and_capture())
+            }
+            canvas::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                if !state.dragging {
+                    return None;
+                }
+                state.dragging = false;
+                state.drag_pos = None;
+                None
+            }
+            canvas::Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
+                if !cursor.is_over(bounds) {
+                    return None;
+                }
+                let (dy, base_step) = match delta {
+                    mouse::ScrollDelta::Lines { y, .. } => (*y, 0.03),
+                    mouse::ScrollDelta::Pixels { y, .. } => (*y, 0.0015),
+                };
+                if dy == 0.0 {
+                    return None;
+                }
+                let mult = if self.modifiers.shift() {
+                    0.25
+                } else if self.modifiers.control() {
+                    3.0
+                } else {
+                    1.0
+                };
+                let t = pan_to_t(self.pan) + dy * base_step * mult;
+                Some(canvas::Action::publish((self.on_change)(t_to_pan(t))).and_capture())
+            }
+            _ => None,
+        }
+    }
 
     fn draw(
         &self,
-        _state: &(),
+        state: &PanState,
         renderer: &Renderer,
         _theme: &Theme,
         bounds: Rectangle,
@@ -493,16 +606,39 @@ impl<Message> canvas::Program<Message> for PanIndicator {
         );
 
         let t = (self.pan as f32 / 100.0).clamp(-1.0, 1.0);
-        let usable = cx - PAN_DOT_R - 2.0;
+        let usable = pan_usable_width(bounds.width);
         let dot_x = cx + t * usable;
-        frame.fill(&Path::circle(Point::new(dot_x, cy), PAN_DOT_R), theme::ACCENT);
+        let dot_color = if state.dragging {
+            Color::from_rgb8(0xf0, 0xf1, 0xf4)
+        } else {
+            theme::ACCENT
+        };
+        frame.fill(&Path::circle(Point::new(dot_x, cy), PAN_DOT_R), dot_color);
 
         vec![frame.into_geometry()]
     }
+
+    fn mouse_interaction(
+        &self,
+        state: &PanState,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+    ) -> mouse::Interaction {
+        if state.dragging {
+            mouse::Interaction::Grabbing
+        } else if cursor.is_over(bounds) {
+            mouse::Interaction::Grab
+        } else {
+            mouse::Interaction::Idle
+        }
+    }
 }
 
-pub fn pan_indicator<'a, Message: 'a>(pan: i8) -> Element<'a, Message> {
-    Canvas::new(PanIndicator { pan })
+pub fn pan_indicator<'a, Message: 'a>(pan: PanIndicator<Message>) -> Element<'a, Message>
+where
+    Message: Clone,
+{
+    Canvas::new(pan)
         .width(Length::Fixed(PAN_W))
         .height(Length::Fixed(PAN_H))
         .into()

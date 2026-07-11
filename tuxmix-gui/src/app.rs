@@ -1,7 +1,7 @@
 use iced::keyboard::{self, Key};
 use iced::widget::{column, container, pick_list, row, scrollable, text};
 use iced::{window, Element, Length, Subscription, Task};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use tuxmix_core::{
@@ -182,6 +182,9 @@ pub enum Message {
     RangeCleared(ChannelId),
     Reset(ChannelId, usize, f32),
 
+    PanChanged(ChannelId, usize, i8),
+    ToggleCollapse(ChannelId),
+
     EditStart(ChannelId, String),
     EditChanged(String),
     EditCommit,
@@ -208,6 +211,9 @@ pub struct TuxMix {
     /// uniformly regardless of data source (mock or real hardware).
     pub input_meters: Vec<f32>,
     pub playback_meters: Vec<f32>,
+    /// Strips the user has collapsed to save horizontal space — presence in
+    /// the set means collapsed.
+    pub collapsed: HashSet<ChannelId>,
 }
 
 /// Fast rise per 50ms tick (~25ms time constant) — a meter should jump to a
@@ -252,6 +258,7 @@ pub fn new(mock: bool) -> TuxMix {
         modifiers: keyboard::Modifiers::default(),
         input_meters: vec![0.0; n_inputs],
         playback_meters: vec![0.0; n_playbacks],
+        collapsed: HashSet::new(),
     }
 }
 
@@ -326,6 +333,14 @@ pub fn update(state: &mut TuxMix, message: Message) -> Task<Message> {
                 state.drag_range = None;
             }
         }
+        Message::PanChanged(cid, out, pan) => {
+            let _ = state.device.set_pan(cid, out, pan);
+        }
+        Message::ToggleCollapse(cid) => {
+            if !state.collapsed.remove(&cid) {
+                state.collapsed.insert(cid);
+            }
+        }
         Message::EditStart(cid, buf) => {
             state.editing = Some(cid);
             state.edit_buf = buf;
@@ -387,7 +402,7 @@ pub fn view(state: &TuxMix) -> Element<'_, Message> {
 fn section_header(label: &str) -> Element<'_, Message> {
     row![
         container(iced::widget::Space::new().width(3).height(12)).style(theme::accent_bar),
-        text(label).color(theme::TEXT_PRIMARY).size(11),
+        text(label).color(theme::TEXT_PRIMARY).size(theme::TEXT_MD),
         iced::widget::rule::horizontal(1),
     ]
     .spacing(8)
@@ -418,11 +433,11 @@ fn top_bar(state: &TuxMix) -> Element<'_, Message> {
 
     let device_chip = chip(
         row![
-            text("●").color(status_color).size(10),
+            text("●").color(status_color).size(theme::TEXT_SM),
             text(state.device.model_name())
                 .color(theme::TEXT_PRIMARY)
-                .size(13),
-            text(status_label).color(status_color).size(11),
+                .size(theme::TEXT_LG),
+            text(status_label).color(status_color).size(theme::TEXT_MD),
         ]
         .spacing(6)
         .align_y(iced::Alignment::Center),
@@ -431,27 +446,27 @@ fn top_bar(state: &TuxMix) -> Element<'_, Message> {
     let tab_chip = chip(
         text(if state.show_matrix { "MATRIX" } else { "MIXER" })
             .color(theme::ACCENT)
-            .size(11),
+            .size(theme::TEXT_MD),
     );
 
     let scene_list = state.scene_list.clone();
     let scene_group = chip(
         row![
-            text("Scene").color(theme::TEXT_SEC).size(11),
+            text("Scene").color(theme::TEXT_SEC).size(theme::TEXT_MD),
             iced::widget::text_input("name", &state.scene_name)
                 .on_input(Message::SceneNameChanged)
                 .on_submit(Message::SceneSave)
                 .style(theme::text_input)
                 .width(Length::Fixed(90.0))
-                .size(11),
-            iced::widget::button(text("Save").size(11))
+                .size(theme::TEXT_MD),
+            iced::widget::button(text("Save").size(theme::TEXT_MD))
                 .style(theme::plain_button)
                 .on_press(Message::SceneSave),
             pick_list(scene_list, None::<String>, Message::SceneLoad)
                 .placeholder("load...")
                 .style(theme::pick_list)
                 .menu_style(theme::menu)
-                .text_size(11),
+                .text_size(theme::TEXT_MD),
         ]
         .spacing(8)
         .align_y(iced::Alignment::Center),
@@ -459,7 +474,7 @@ fn top_bar(state: &TuxMix) -> Element<'_, Message> {
 
     let submix_group = chip(
         row![
-            text("Submix").color(theme::TEXT_SEC).size(11),
+            text("Submix").color(theme::TEXT_SEC).size(theme::TEXT_MD),
             pick_list(
                 OUT_LABELS.to_vec(),
                 Some(OUT_LABELS[state.sel_out]),
@@ -470,7 +485,7 @@ fn top_bar(state: &TuxMix) -> Element<'_, Message> {
             )
             .style(theme::pick_list)
             .menu_style(theme::menu)
-            .text_size(12),
+            .text_size(theme::TEXT_MD),
         ]
         .spacing(8)
         .align_y(iced::Alignment::Center),
@@ -479,11 +494,11 @@ fn top_bar(state: &TuxMix) -> Element<'_, Message> {
     let clock_chip = chip(
         text(state.device.settings().clock_source.clone())
             .color(theme::TEXT_SEC)
-            .size(11),
+            .size(theme::TEXT_MD),
     );
 
     let bar = row![
-        text("TuxMix").color(theme::ACCENT).size(20),
+        text("TuxMix").color(theme::ACCENT).size(theme::TEXT_XL),
         device_chip,
         tab_chip,
         iced::widget::Space::new().width(Length::Fill),
@@ -538,6 +553,7 @@ fn mixer_view(state: &TuxMix) -> Element<'_, Message> {
             edit_buf: &state.edit_buf,
             drag_range,
             modifiers: state.modifiers,
+            collapsed: state.collapsed.contains(&cid),
         }));
     }
 
@@ -568,6 +584,7 @@ fn mixer_view(state: &TuxMix) -> Element<'_, Message> {
             edit_buf: &state.edit_buf,
             drag_range,
             modifiers: state.modifiers,
+            collapsed: state.collapsed.contains(&cid),
         }));
     }
 
@@ -597,6 +614,7 @@ fn mixer_view(state: &TuxMix) -> Element<'_, Message> {
             edit_buf: &state.edit_buf,
             drag_range,
             modifiers: state.modifiers,
+            collapsed: state.collapsed.contains(&cid),
         }));
     }
 
@@ -607,7 +625,7 @@ fn mixer_view(state: &TuxMix) -> Element<'_, Message> {
             OUT_LABELS[state.sel_out]
         ))
         .color(theme::TEXT_SEC)
-        .size(10),
+        .size(theme::TEXT_XS),
         scrollable(input_strips)
             .direction(scrollable::Direction::Horizontal(
                 theme::thin_scrollbar()
@@ -641,7 +659,7 @@ fn matrix_view(state: &TuxMix) -> Element<'_, Message> {
         section_header("MATRIX MIXER"),
         text("Volume per input per output - Tab to return")
             .color(theme::TEXT_SEC)
-            .size(10),
+            .size(theme::TEXT_XS),
         matrix::view(state),
     ]
     .spacing(8);

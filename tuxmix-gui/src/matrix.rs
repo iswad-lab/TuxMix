@@ -15,11 +15,11 @@ pub fn view(state: &TuxMix) -> Element<'_, Message> {
     let ni = state.device.inputs().len();
     let np = state.device.playbacks().len();
 
-    let mut row_labels = column![text("").size(9)].spacing(2);
+    let mut row_labels = column![text("").size(theme::TEXT_XS)].spacing(2);
     for (out, label) in OUT_LABELS.iter().enumerate() {
         let active = out == state.sel_out;
         let color = if active { theme::ACCENT } else { theme::TEXT_SEC };
-        row_labels = row_labels.push(text(*label).color(color).size(9));
+        row_labels = row_labels.push(text(*label).color(color).size(theme::TEXT_XS));
     }
 
     let mut cols = row![row_labels].spacing(2);
@@ -37,7 +37,8 @@ pub fn view(state: &TuxMix) -> Element<'_, Message> {
             )
         };
 
-        let mut col_widget = column![text(name).color(theme::TEXT_SEC).size(9)].spacing(2);
+        let mut col_widget =
+            column![text(name).color(theme::TEXT_SEC).size(theme::TEXT_XS)].spacing(2);
         for out in 0..OUT_LABELS.len() {
             let vol = if col < ni {
                 state.device.inputs()[col].volumes[out]
