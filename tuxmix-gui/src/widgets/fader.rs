@@ -13,9 +13,15 @@ use crate::theme;
 /// translucent color wash filling the whole column, and the ruler ticks
 /// are drawn on top of it, like TotalMix — rather than two separate
 /// side-by-side strips. The fader itself gets its own centered column.
-const METER_RULER_W: f32 = 27.0;
-const GAP: f32 = 5.0;
-const TRACK_W: f32 = 24.0;
+///
+/// These, and every other pixel constant in this file, are the sizes at
+/// `scale == 1.0` (`theme::SCALE_DEFAULT`) — every widget here takes a
+/// `scale` field/parameter and multiplies it in at both draw time and
+/// hit-test time, so the live UI zoom (Ctrl+=/Ctrl+-/Ctrl+0) stays in
+/// sync between what's drawn and what's clickable.
+const METER_RULER_W: f32 = 30.0;
+const GAP: f32 = 6.0;
+const TRACK_W: f32 = 26.0;
 const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 /// Shift-drag sensitivity reduction: cursor travel over the whole track
 /// only moves the value by this fraction of what a normal drag would.
@@ -70,6 +76,7 @@ pub struct Fader<Message> {
     pub height: f32,
     pub show_meter: bool,
     pub modifiers: Modifiers,
+    pub scale: f32,
     pub on_press: Box<dyn Fn(f32, Option<(f32, f32)>) -> Message>,
     pub on_drag: Box<dyn Fn(f32) -> Message>,
     pub on_release: Box<dyn Fn() -> Message>,
@@ -79,7 +86,7 @@ pub struct Fader<Message> {
 impl<Message> Fader<Message> {
     fn track_x(&self) -> f32 {
         if self.show_meter {
-            METER_RULER_W + GAP
+            (METER_RULER_W + GAP) * self.scale
         } else {
             0.0
         }
@@ -208,23 +215,26 @@ impl<Message> canvas::Program<Message> for Fader<Message> {
     ) -> Vec<Geometry> {
         let mut frame = Frame::new(renderer, bounds.size());
         if self.show_meter {
-            let meter_rect =
-                Rectangle::new(Point::ORIGIN, Size::new(METER_RULER_W, bounds.height));
+            let meter_rect = Rectangle::new(
+                Point::ORIGIN,
+                Size::new(METER_RULER_W * self.scale, bounds.height),
+            );
             // Meter first, as a translucent wash; ruler ticks drawn on top
             // of it so both share the column instead of splitting the strip.
-            draw_meter(&mut frame, meter_rect, self.meter);
-            draw_ruler(&mut frame, meter_rect);
+            draw_meter(&mut frame, meter_rect, self.meter, self.scale);
+            draw_ruler(&mut frame, meter_rect, self.scale);
         }
         draw_track(
             &mut frame,
             Rectangle::new(
                 Point::new(self.track_x(), 0.0),
-                Size::new(TRACK_W, bounds.height),
+                Size::new(TRACK_W * self.scale, bounds.height),
             ),
             self.value,
             self.default_value,
             self.range,
             state.dragging,
+            self.scale,
         );
         vec![frame.into_geometry()]
     }
@@ -245,10 +255,27 @@ impl<Message> canvas::Program<Message> for Fader<Message> {
     }
 }
 
-const METER_PILL_W: f32 = 6.0;
-const METER_RADIUS: f32 = 3.0;
-const CLIP_H: f32 = 5.0;
+const METER_PILL_W: f32 = 7.0;
+const METER_RADIUS: f32 = 3.5;
+const CLIP_H: f32 = 6.0;
 const CLIP_GAP: f32 = 3.0;
+
+/// `f32::clamp` panics if `lo > hi` — which a plain `min - margin, max -
+/// margin` pair can produce for a single bad frame: iced 0.14 has a layout
+/// quirk where a `Canvas` inside a horizontally-scrollable row can receive
+/// a stale, much-too-small `bounds` for one frame right after its declared
+/// `Length::Fixed` size changes (observed when live UI zoom changes strip
+/// width mid-session — the next frame recovers on its own). Drawing code
+/// must never crash the whole app over a transient bad layout, so every
+/// clamp against a widget's own bounds goes through this instead of the
+/// raw method.
+fn safe_clamp(v: f32, lo: f32, hi: f32) -> f32 {
+    if lo <= hi {
+        v.clamp(lo, hi)
+    } else {
+        (lo + hi) / 2.0
+    }
+}
 
 /// Linear interpolation between two colors — `t` is clamped to [0, 1].
 fn lerp_color(a: Color, b: Color, t: f32) -> Color {
@@ -271,16 +298,20 @@ const HOT_THRESHOLD: f32 = 0.85;
 /// `HOT_THRESHOLD`, plus a separate clip "LED" above the track that lights
 /// up near 0 dBFS. Reads as a minimal modern level indicator, not a
 /// traffic light, while still giving continuous feedback as it climbs.
-fn draw_meter(frame: &mut Frame, r: Rectangle, level: f32) {
+fn draw_meter(frame: &mut Frame, r: Rectangle, level: f32, scale: f32) {
     let l = level.clamp(0.0, 1.0);
+    let pill_w = METER_PILL_W * scale;
+    let radius = METER_RADIUS * scale;
+    let clip_h = CLIP_H * scale;
+    let clip_gap = CLIP_GAP * scale;
 
     let track = Rectangle::new(
-        Point::new(r.x, r.y + CLIP_H + CLIP_GAP),
-        Size::new(METER_PILL_W, r.height - CLIP_H - CLIP_GAP),
+        Point::new(r.x, r.y + clip_h + clip_gap),
+        Size::new(pill_w, (r.height - clip_h - clip_gap).max(0.0)),
     );
 
     frame.fill(
-        &Path::new(|b| b.rounded_rectangle(track.position(), track.size(), METER_RADIUS.into())),
+        &Path::new(|b| b.rounded_rectangle(track.position(), track.size(), radius.into())),
         Color::from_rgb8(0x08, 0x08, 0x0a),
     );
 
@@ -290,19 +321,13 @@ fn draw_meter(frame: &mut Frame, r: Rectangle, level: f32) {
         let hot_t = (l - HOT_THRESHOLD) / (1.0 - HOT_THRESHOLD);
         let fill_color = lerp_color(theme::MGREEN, theme::MRED, hot_t);
         frame.fill(
-            &Path::new(|b| {
-                b.rounded_rectangle(
-                    fill_pos,
-                    Size::new(METER_PILL_W, fill_h),
-                    METER_RADIUS.into(),
-                )
-            }),
+            &Path::new(|b| b.rounded_rectangle(fill_pos, Size::new(pill_w, fill_h), radius.into())),
             fill_color,
         );
     }
 
     // Clip LED — a fixed indicator above the track, dim until triggered.
-    let clip_rect = Rectangle::new(Point::new(r.x, r.y), Size::new(METER_PILL_W, CLIP_H));
+    let clip_rect = Rectangle::new(Point::new(r.x, r.y), Size::new(pill_w, clip_h));
     let clipping = l >= 0.95;
     let clip_color = if clipping {
         theme::MRED
@@ -311,29 +336,29 @@ fn draw_meter(frame: &mut Frame, r: Rectangle, level: f32) {
     };
     if clipping {
         let glow = Rectangle::new(
-            Point::new(r.x - 2.0, r.y - 2.0),
-            Size::new(METER_PILL_W + 4.0, CLIP_H + 4.0),
+            Point::new(r.x - 2.0 * scale, r.y - 2.0 * scale),
+            Size::new(pill_w + 4.0 * scale, clip_h + 4.0 * scale),
         );
         frame.fill(
             &Path::new(|b| {
-                b.rounded_rectangle(glow.position(), glow.size(), (CLIP_H / 2.0 + 2.0).into())
+                b.rounded_rectangle(glow.position(), glow.size(), (clip_h / 2.0 + 2.0 * scale).into())
             }),
             Color { a: 0.35, ..theme::MRED },
         );
     }
     frame.fill(
         &Path::new(|b| {
-            b.rounded_rectangle(clip_rect.position(), clip_rect.size(), (CLIP_H / 2.0).into())
+            b.rounded_rectangle(clip_rect.position(), clip_rect.size(), (clip_h / 2.0).into())
         }),
         clip_color,
     );
 }
 
-const RAIL_W: f32 = 3.0;
-const CAP_W: f32 = 20.0;
-const CAP_H: f32 = 13.0;
-const CAP_RADIUS: f32 = 2.5;
-const REF_R: f32 = 2.5;
+const RAIL_W: f32 = 3.5;
+const CAP_W: f32 = 22.0;
+const CAP_H: f32 = 15.0;
+const CAP_RADIUS: f32 = 3.0;
+const REF_R: f32 = 3.0;
 
 fn draw_track(
     frame: &mut Frame,
@@ -342,7 +367,14 @@ fn draw_track(
     default_value: f32,
     range: (f32, f32),
     dragging: bool,
+    scale: f32,
 ) {
+    let rail_w = RAIL_W * scale;
+    let cap_w = CAP_W * scale;
+    let cap_h = CAP_H * scale;
+    let cap_radius = CAP_RADIUS * scale;
+    let ref_r = REF_R * scale;
+
     let (lo, hi) = range;
     let (t_lo, t_hi) = (vol_to_t(lo), vol_to_t(hi));
 
@@ -356,42 +388,42 @@ fn draw_track(
     };
 
     let cx = r.x + r.width / 2.0;
-    let half_cap = CAP_H / 2.0;
+    let half_cap = cap_h / 2.0;
     let raw_y = pos_of(value);
-    let cap_y = raw_y.clamp(r.y + half_cap, r.y + r.height - half_cap);
+    let cap_y = safe_clamp(raw_y, r.y + half_cap, r.y + r.height - half_cap);
 
     // Groove — the full-length rail, unfilled color.
     let groove = Path::rectangle(
-        Point::new(cx - RAIL_W / 2.0, r.y),
-        Size::new(RAIL_W, r.height),
+        Point::new(cx - rail_w / 2.0, r.y),
+        Size::new(rail_w, r.height),
     );
     frame.fill(&groove, theme::BORDER);
 
     // Filled portion of the rail, from the bottom up to the cap.
     if raw_y < r.y + r.height {
         let fill = Path::rectangle(
-            Point::new(cx - RAIL_W / 2.0, cap_y),
-            Size::new(RAIL_W, r.y + r.height - cap_y),
+            Point::new(cx - rail_w / 2.0, cap_y),
+            Size::new(rail_w, r.y + r.height - cap_y),
         );
         frame.fill(&fill, theme::FADER);
     }
 
     // Unity/default reference — a small hollow ring on the rail, like the
     // 0 dB mark on a real console strip.
-    let ref_y = pos_of(default_value).clamp(r.y + REF_R, r.y + r.height - REF_R);
+    let ref_y = safe_clamp(pos_of(default_value), r.y + ref_r, r.y + r.height - ref_r);
     frame.stroke(
-        &Path::circle(Point::new(cx, ref_y), REF_R),
+        &Path::circle(Point::new(cx, ref_y), ref_r),
         Stroke::default().with_color(theme::TEXT_SEC).with_width(1.0),
     );
 
     // Cap — flat + ridged, like a real fader cap grip, no heavy bevel.
-    let cap_left = cx - CAP_W / 2.0;
+    let cap_left = cx - cap_w / 2.0;
     let cap_top = cap_y - half_cap;
 
     if dragging {
         let glow = Path::rectangle(
-            Point::new(cap_left - 3.0, cap_top - 3.0),
-            Size::new(CAP_W + 6.0, CAP_H + 6.0),
+            Point::new(cap_left - 3.0 * scale, cap_top - 3.0 * scale),
+            Size::new(cap_w + 6.0 * scale, cap_h + 6.0 * scale),
         );
         frame.fill(&glow, Color { a: 0.18, ..theme::FADER });
     }
@@ -399,8 +431,8 @@ fn draw_track(
     let body = Path::new(|b| {
         b.rounded_rectangle(
             Point::new(cap_left, cap_top),
-            Size::new(CAP_W, CAP_H),
-            CAP_RADIUS.into(),
+            Size::new(cap_w, cap_h),
+            cap_radius.into(),
         )
     });
     let body_color = if dragging {
@@ -412,10 +444,10 @@ fn draw_track(
 
     // Ridge lines — the grip texture.
     for i in 1..=3 {
-        let y = cap_top + (CAP_H / 4.0) * i as f32;
+        let y = cap_top + (cap_h / 4.0) * i as f32;
         let ridge = Path::rectangle(
-            Point::new(cap_left + 3.0, y - 0.5),
-            Size::new(CAP_W - 6.0, 1.0),
+            Point::new(cap_left + 3.0 * scale, y - 0.5),
+            Size::new(cap_w - 6.0 * scale, 1.0),
         );
         frame.fill(&ridge, Color::from_rgba8(0x00, 0x00, 0x00, 0.25));
     }
@@ -429,17 +461,17 @@ fn draw_track(
 /// Drawn on top of the (translucent) meter wash, so it needs to stay
 /// legible against whatever color is lit behind it — brighter than the
 /// usual secondary text color, with a tick + number per breakpoint.
-fn draw_ruler(frame: &mut Frame, r: Rectangle) {
+fn draw_ruler(frame: &mut Frame, r: Rectangle, scale: f32) {
     const TICKS: [f32; 6] = [0.0, -6.0, -10.0, -20.0, -40.0, -60.0];
     let label_color = theme::TEXT_SEC;
-    let x0 = r.x + METER_PILL_W + 4.0;
+    let x0 = r.x + METER_PILL_W * scale + 4.0 * scale;
 
     for db in TICKS {
         let t = db_to_t(db);
         let y = r.y + r.height - r.height * t;
-        let y = y.clamp(r.y + 4.0, r.y + r.height - 4.0);
+        let y = safe_clamp(y, r.y + 4.0 * scale, r.y + r.height - 4.0 * scale);
 
-        let tick = Path::line(Point::new(x0, y), Point::new(x0 + 3.0, y));
+        let tick = Path::line(Point::new(x0, y), Point::new(x0 + 3.0 * scale, y));
         frame.stroke(
             &tick,
             Stroke::default().with_color(label_color).with_width(1.0),
@@ -452,9 +484,9 @@ fn draw_ruler(frame: &mut Frame, r: Rectangle) {
         };
         frame.fill_text(canvas::Text {
             content: label,
-            position: Point::new(x0 + 5.0, y - 4.0),
+            position: Point::new(x0 + 5.0 * scale, y - 4.0 * scale),
             color: label_color,
-            size: theme::TEXT_MICRO.into(),
+            size: (theme::TEXT_MICRO * scale).into(),
             ..canvas::Text::default()
         });
     }
@@ -466,9 +498,9 @@ where
 {
     let height = fader.height;
     let width = if fader.show_meter {
-        METER_RULER_W + GAP + TRACK_W
+        (METER_RULER_W + GAP + TRACK_W) * fader.scale
     } else {
-        TRACK_W
+        TRACK_W * fader.scale
     };
     Canvas::new(fader)
         .width(Length::Fixed(width))
@@ -481,6 +513,7 @@ where
 /// (fader, mute/solo, pan) for a glance-only level readout.
 struct VuMeter {
     level: f32,
+    scale: f32,
 }
 
 impl<Message> canvas::Program<Message> for VuMeter {
@@ -495,23 +528,26 @@ impl<Message> canvas::Program<Message> for VuMeter {
         _cursor: mouse::Cursor,
     ) -> Vec<Geometry> {
         let mut frame = Frame::new(renderer, bounds.size());
-        let meter_rect = Rectangle::new(Point::ORIGIN, Size::new(METER_RULER_W, bounds.height));
-        draw_meter(&mut frame, meter_rect, self.level);
-        draw_ruler(&mut frame, meter_rect);
+        let meter_rect = Rectangle::new(
+            Point::ORIGIN,
+            Size::new(METER_RULER_W * self.scale, bounds.height),
+        );
+        draw_meter(&mut frame, meter_rect, self.level, self.scale);
+        draw_ruler(&mut frame, meter_rect, self.scale);
         vec![frame.into_geometry()]
     }
 }
 
-pub fn vu_meter<'a, Message: 'a>(level: f32, height: f32) -> Element<'a, Message> {
-    Canvas::new(VuMeter { level })
-        .width(Length::Fixed(METER_RULER_W))
+pub fn vu_meter<'a, Message: 'a>(level: f32, height: f32, scale: f32) -> Element<'a, Message> {
+    Canvas::new(VuMeter { level, scale })
+        .width(Length::Fixed(METER_RULER_W * scale))
         .height(Length::Fixed(height))
         .into()
 }
 
-const PAN_W: f32 = 44.0;
-const PAN_H: f32 = 12.0;
-const PAN_DOT_R: f32 = 2.75;
+const PAN_W: f32 = 48.0;
+const PAN_H: f32 = 14.0;
+const PAN_DOT_R: f32 = 3.25;
 
 /// A groove with a dot marking where the pan sits — click/drag horizontally
 /// to set it, shift-drag for a fine (reduced-sensitivity) adjustment,
@@ -521,6 +557,7 @@ const PAN_DOT_R: f32 = 2.75;
 pub struct PanIndicator<Message> {
     pub pan: i8,
     pub modifiers: Modifiers,
+    pub scale: f32,
     pub on_change: Box<dyn Fn(i8) -> Message>,
     pub on_reset: Box<dyn Fn() -> Message>,
 }
@@ -534,8 +571,8 @@ pub struct PanState {
     drag_pos: Option<f32>,
 }
 
-fn pan_usable_width(bounds_width: f32) -> f32 {
-    bounds_width / 2.0 - PAN_DOT_R - 2.0
+fn pan_usable_width(bounds_width: f32, scale: f32) -> f32 {
+    bounds_width / 2.0 - PAN_DOT_R * scale - 2.0 * scale
 }
 
 fn pan_to_t(pan: i8) -> f32 {
@@ -546,9 +583,9 @@ fn t_to_pan(t: f32) -> i8 {
     (t.clamp(-1.0, 1.0) * 100.0).round() as i8
 }
 
-fn locate_pan(x: f32, bounds: Rectangle) -> i8 {
+fn locate_pan(x: f32, bounds: Rectangle, scale: f32) -> i8 {
     let cx = bounds.x + bounds.width / 2.0;
-    let usable = pan_usable_width(bounds.width);
+    let usable = pan_usable_width(bounds.width, scale);
     let t = (x - cx) / usable;
     t_to_pan(t)
 }
@@ -580,7 +617,7 @@ impl<Message> canvas::Program<Message> for PanIndicator<Message> {
                 state.last_click = Some(now);
                 state.dragging = true;
 
-                let pan = locate_pan(pos.x, bounds);
+                let pan = locate_pan(pos.x, bounds, self.scale);
                 state.drag_pos = Some(pos.x);
                 Some(canvas::Action::publish((self.on_change)(pan)).and_capture())
             }
@@ -644,28 +681,36 @@ impl<Message> canvas::Program<Message> for PanIndicator<Message> {
         let mut frame = Frame::new(renderer, bounds.size());
         let cy = bounds.height / 2.0;
         let cx = bounds.width / 2.0;
+        let inset = 2.0 * self.scale;
 
-        let groove = Path::line(Point::new(2.0, cy), Point::new(bounds.width - 2.0, cy));
+        let groove = Path::line(
+            Point::new(inset, cy),
+            Point::new(bounds.width - inset, cy),
+        );
         frame.stroke(
             &groove,
             Stroke::default().with_color(theme::BORDER).with_width(1.5),
         );
 
-        let tick = Path::line(Point::new(cx, cy - 3.0), Point::new(cx, cy + 3.0));
+        let tick_len = 3.0 * self.scale;
+        let tick = Path::line(Point::new(cx, cy - tick_len), Point::new(cx, cy + tick_len));
         frame.stroke(
             &tick,
             Stroke::default().with_color(theme::TEXT_SEC).with_width(1.0),
         );
 
         let t = (self.pan as f32 / 100.0).clamp(-1.0, 1.0);
-        let usable = pan_usable_width(bounds.width);
+        let usable = pan_usable_width(bounds.width, self.scale);
         let dot_x = cx + t * usable;
         let dot_color = if state.dragging {
             Color::from_rgb8(0xf0, 0xf1, 0xf4)
         } else {
             theme::ACCENT
         };
-        frame.fill(&Path::circle(Point::new(dot_x, cy), PAN_DOT_R), dot_color);
+        frame.fill(
+            &Path::circle(Point::new(dot_x, cy), PAN_DOT_R * self.scale),
+            dot_color,
+        );
 
         vec![frame.into_geometry()]
     }
@@ -690,9 +735,10 @@ pub fn pan_indicator<'a, Message: 'a>(pan: PanIndicator<Message>) -> Element<'a,
 where
     Message: Clone,
 {
+    let scale = pan.scale;
     Canvas::new(pan)
-        .width(Length::Fixed(PAN_W))
-        .height(Length::Fixed(PAN_H))
+        .width(Length::Fixed(PAN_W * scale))
+        .height(Length::Fixed(PAN_H * scale))
         .into()
 }
 

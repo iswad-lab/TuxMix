@@ -28,24 +28,38 @@ pub const ON_ACTIVE: Color = Color::from_rgb8(0x1a, 0x08, 0x08);
 // than a one-off pixel value chosen per call site — before this there
 // were eight near-random sizes (6.5, 8, 9, 10, 11, 12, 13, 20) with no
 // clear reason two of them (8 vs 9, 11 vs 12) were ever different.
+//
+// These are the sizes at `ui_scale == 1.0` — bumped up from the original
+// pass (11px body text read as small for a desktop app) so the default,
+// unscaled UI is already comfortable; `ui_scale` (Ctrl+=/Ctrl+-/Ctrl+0)
+// is for further personal preference on top of that, not for fixing a
+// too-small baseline.
 
 /// Canvas-drawn ruler tick labels on the fader — the smallest legible
 /// size, only used where the fader canvas has no room for anything
 /// bigger.
-pub const TEXT_MICRO: f32 = 7.0;
+pub const TEXT_MICRO: f32 = 8.0;
 /// Tertiary annotations: type tags, dB readouts, the pan L/R/C label,
 /// matrix-view row/column labels.
-pub const TEXT_XS: f32 = 9.0;
+pub const TEXT_XS: f32 = 10.0;
 /// Buttons and compact controls: M/S, 48V/PAD, the collapse toggle,
 /// the dB edit input.
-pub const TEXT_SM: f32 = 10.0;
+pub const TEXT_SM: f32 = 11.0;
 /// Default body text: channel names, section headers, top-bar labels
 /// and pick lists.
-pub const TEXT_MD: f32 = 11.0;
+pub const TEXT_MD: f32 = 13.0;
 /// Emphasis: the connected device's model name in the top bar.
-pub const TEXT_LG: f32 = 13.0;
+pub const TEXT_LG: f32 = 15.0;
 /// The "TuxMix" wordmark.
-pub const TEXT_XL: f32 = 20.0;
+pub const TEXT_XL: f32 = 22.0;
+
+/// Live UI zoom, default and "100%". Adjustable at runtime
+/// (Ctrl+=/Ctrl+-/Ctrl+0) and multiplied into every text size and widget
+/// dimension in the mixer/matrix views — see `TuxMix::ui_scale`.
+pub const SCALE_DEFAULT: f32 = 1.0;
+pub const SCALE_STEP: f32 = 0.1;
+pub const SCALE_MIN: f32 = 0.75;
+pub const SCALE_MAX: f32 = 1.75;
 
 pub fn panel(_theme: &iced::Theme) -> container::Style {
     container::Style {

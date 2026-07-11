@@ -10,14 +10,17 @@ use crate::app::{db_text, short_label, Message};
 use crate::theme;
 use crate::widgets::fader::{fader, pan_indicator, vu_meter, Fader, PanIndicator};
 
-const FADER_H: f32 = 150.0;
-const STRIP_W: f32 = 92.0;
+/// Base sizes at `scale == 1.0` (`theme::SCALE_DEFAULT`) — every dimension
+/// in a strip is one of these times `StripParams::scale`, so the live UI
+/// zoom (Ctrl+=/Ctrl+-/Ctrl+0) resizes strips the same way it resizes text.
+const FADER_H: f32 = 168.0;
+const STRIP_W: f32 = 104.0;
 /// Collapsed strips are a glance-only readout: name + VU meter, nothing
 /// else — no fader, no mute/solo, no pan. Trading away every control for
 /// space is the point; a strip you still need to touch shouldn't be
 /// collapsed. Width is set by the header (name + expand button), not the
 /// meter, which is narrower than that on its own.
-const COLLAPSED_W: f32 = 56.0;
+const COLLAPSED_W: f32 = 60.0;
 
 pub struct StripParams<'a> {
     pub cid: ChannelId,
@@ -39,6 +42,7 @@ pub struct StripParams<'a> {
     pub drag_range: Option<(f32, f32)>,
     pub modifiers: Modifiers,
     pub collapsed: bool,
+    pub scale: f32,
 }
 
 /// A button's own padding-based centering isn't reliable across glyphs of
@@ -59,23 +63,30 @@ fn centered_label<'a>(s: &'a str, size: f32) -> Element<'a, Message> {
     .into()
 }
 
-fn header_row<'a>(cid: ChannelId, name: &str, collapsed: bool, type_tag: Option<(&'static str, Color)>) -> Element<'a, Message> {
+fn header_row<'a>(
+    cid: ChannelId,
+    name: &str,
+    collapsed: bool,
+    type_tag: Option<(&'static str, Color)>,
+    scale: f32,
+) -> Element<'a, Message> {
     // "-"/"+" rather than a chevron glyph — guaranteed to render on any
     // font, no risk of tofu boxes for a symbol the default sans might lack.
     let collapse_btn = button(centered_label(
         if collapsed { "+" } else { "-" },
-        theme::TEXT_SM,
+        theme::TEXT_SM * scale,
     ))
     .padding(0)
-    .width(18)
-    .height(16)
+    .width(18.0 * scale)
+    .height(16.0 * scale)
     .style(theme::plain_button)
     .on_press(Message::ToggleCollapse(cid));
 
-    let mut header = row![text(short_label(name).to_string()).size(theme::TEXT_MD)].spacing(2);
+    let mut header =
+        row![text(short_label(name).to_string()).size(theme::TEXT_MD * scale)].spacing(2);
     if !collapsed {
         if let Some((tag, color)) = type_tag {
-            header = header.push(text(tag).color(color).size(theme::TEXT_XS));
+            header = header.push(text(tag).color(color).size(theme::TEXT_XS * scale));
         }
     }
     header
@@ -90,8 +101,8 @@ fn header_row<'a>(cid: ChannelId, name: &str, collapsed: bool, type_tag: Option<
 /// (fader, mute/solo, pan) is the point of collapsing it, not a side effect.
 fn collapsed_strip<'a>(p: StripParams<'a>) -> Element<'a, Message> {
     let rows = column![
-        header_row(p.cid, &p.name, true, p.type_tag),
-        vu_meter(p.meter, FADER_H),
+        header_row(p.cid, &p.name, true, p.type_tag, p.scale),
+        vu_meter(p.meter, FADER_H * p.scale, p.scale),
     ]
     .spacing(1)
     .width(Length::Fill)
@@ -99,8 +110,8 @@ fn collapsed_strip<'a>(p: StripParams<'a>) -> Element<'a, Message> {
 
     container(rows)
         .style(theme::panel)
-        .padding([3, 6])
-        .width(Length::Fixed(COLLAPSED_W))
+        .padding([3.0 * p.scale, 6.0 * p.scale])
+        .width(Length::Fixed(COLLAPSED_W * p.scale))
         .into()
 }
 
@@ -111,17 +122,18 @@ pub fn strip<'a>(p: StripParams<'a>) -> Element<'a, Message> {
 
     let cid = p.cid;
     let out = p.output_idx;
+    let scale = p.scale;
 
-    let header = header_row(cid, &p.name, false, p.type_tag);
+    let header = header_row(cid, &p.name, false, p.type_tag, scale);
 
-    let mute_btn = button(centered_label("M", theme::TEXT_SM))
+    let mute_btn = button(centered_label("M", theme::TEXT_SM * scale))
         .width(Length::Fill)
-        .height(18)
+        .height(18.0 * scale)
         .style(theme::toggle_button(p.mute, theme::MUTE_COLOR))
         .on_press(Message::Mute(cid, !p.mute));
-    let solo_btn = button(centered_label("S", theme::TEXT_SM))
+    let solo_btn = button(centered_label("S", theme::TEXT_SM * scale))
         .width(Length::Fill)
-        .height(18)
+        .height(18.0 * scale)
         .style(theme::toggle_button(p.solo, theme::SOLO_COLOR))
         .on_press(Message::Solo(cid, !p.solo));
     // Fixed-width buttons left dead space flanking them whenever the card
@@ -137,18 +149,18 @@ pub fn strip<'a>(p: StripParams<'a>) -> Element<'a, Message> {
             let mut tg_row = row![].spacing(2).width(Length::Fill);
             if p.has_48v {
                 tg_row = tg_row.push(
-                    button(centered_label("48V", theme::TEXT_SM))
+                    button(centered_label("48V", theme::TEXT_SM * scale))
                         .width(Length::Fill)
-                        .height(18)
+                        .height(18.0 * scale)
                         .style(theme::toggle_button(p.phantom, theme::PHANTOM))
                         .on_press(Message::Phantom(idx, !p.phantom)),
                 );
             }
             if p.has_pad {
                 tg_row = tg_row.push(
-                    button(centered_label("PAD", theme::TEXT_SM))
+                    button(centered_label("PAD", theme::TEXT_SM * scale))
                         .width(Length::Fill)
-                        .height(18)
+                        .height(18.0 * scale)
                         .style(theme::toggle_button(p.pad, theme::ACCENT))
                         .on_press(Message::Pad(idx, !p.pad)),
                 );
@@ -163,9 +175,10 @@ pub fn strip<'a>(p: StripParams<'a>) -> Element<'a, Message> {
         range: p.drag_range.unwrap_or((0.0, 1.0)),
         default_value: default_vol,
         meter: p.meter,
-        height: FADER_H,
+        height: FADER_H * scale,
         show_meter: true,
         modifiers: p.modifiers,
+        scale,
         on_press: Box::new(move |v, range| Message::FaderPressed(cid, out, v, range)),
         on_drag: Box::new(move |v| Message::VolumeChanged(cid, out, v)),
         on_release: Box::new(move || Message::RangeCleared(cid)),
@@ -178,8 +191,8 @@ pub fn strip<'a>(p: StripParams<'a>) -> Element<'a, Message> {
             .on_input(Message::EditChanged)
             .on_submit(Message::EditCommit)
             .style(theme::text_input)
-            .size(theme::TEXT_SM)
-            .width(Length::Fixed(64.0))
+            .size(theme::TEXT_SM * scale)
+            .width(Length::Fixed(64.0 * scale))
             .into()
     } else {
         let initial = if p.vol > 0.0 {
@@ -190,7 +203,7 @@ pub fn strip<'a>(p: StripParams<'a>) -> Element<'a, Message> {
         mouse_area(
             text(db_text(p.vol))
                 .color(theme::TEXT_SEC)
-                .size(theme::TEXT_XS),
+                .size(theme::TEXT_XS * scale),
         )
         .on_double_click(Message::EditStart(cid, initial))
         .into()
@@ -211,10 +224,11 @@ pub fn strip<'a>(p: StripParams<'a>) -> Element<'a, Message> {
                 pan_indicator(PanIndicator {
                     pan: p.pan,
                     modifiers: p.modifiers,
+                    scale,
                     on_change: Box::new(move |pan| Message::PanChanged(cid, out, pan)),
                     on_reset: Box::new(move || Message::PanChanged(cid, out, 0)),
                 }),
-                text(pan_str).color(theme::TEXT_SEC).size(theme::TEXT_XS),
+                text(pan_str).color(theme::TEXT_SEC).size(theme::TEXT_XS * scale),
             ]
             .spacing(1)
             .align_x(iced::Alignment::Center),
@@ -226,7 +240,7 @@ pub fn strip<'a>(p: StripParams<'a>) -> Element<'a, Message> {
             .align_x(iced::Alignment::Center),
     )
     .style(theme::panel)
-    .padding([3, 6])
-    .width(Length::Fixed(STRIP_W))
+    .padding([3.0 * scale, 6.0 * scale])
+    .width(Length::Fixed(STRIP_W * scale))
     .into()
 }

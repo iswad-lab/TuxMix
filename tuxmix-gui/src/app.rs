@@ -171,6 +171,9 @@ pub enum Message {
     ModifiersChanged(keyboard::Modifiers),
     TabPressed,
     EscapePressed,
+    ScaleUp,
+    ScaleDown,
+    ScaleReset,
 
     Mute(ChannelId, bool),
     Solo(ChannelId, bool),
@@ -214,6 +217,10 @@ pub struct TuxMix {
     /// Strips the user has collapsed to save horizontal space — presence in
     /// the set means collapsed.
     pub collapsed: HashSet<ChannelId>,
+    /// Live UI zoom (Ctrl+=/Ctrl+-/Ctrl+0), multiplied into every text size
+    /// and widget dimension in the mixer/matrix views. `theme::SCALE_*`
+    /// constants define the default/step/bounds.
+    pub ui_scale: f32,
 }
 
 /// Matches the `Tick` subscription interval below — the release curve is
@@ -295,6 +302,7 @@ pub fn new(mock: bool) -> TuxMix {
         input_meters: vec![MeterAnim::new(); n_inputs],
         playback_meters: vec![MeterAnim::new(); n_playbacks],
         collapsed: HashSet::new(),
+        ui_scale: theme::SCALE_DEFAULT,
     }
 }
 
@@ -332,6 +340,13 @@ pub fn update(state: &mut TuxMix, message: Message) -> Task<Message> {
             }
         }
         Message::ModifiersChanged(m) => state.modifiers = m,
+        Message::ScaleUp => {
+            state.ui_scale = (state.ui_scale + theme::SCALE_STEP).min(theme::SCALE_MAX);
+        }
+        Message::ScaleDown => {
+            state.ui_scale = (state.ui_scale - theme::SCALE_STEP).max(theme::SCALE_MIN);
+        }
+        Message::ScaleReset => state.ui_scale = theme::SCALE_DEFAULT,
         Message::EscapePressed => {
             if state.editing.is_some() {
                 state.editing = None;
@@ -407,11 +422,25 @@ fn handle_global_event(
     _id: window::Id,
 ) -> Option<Message> {
     match event {
-        iced::Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) => match key {
-            Key::Named(keyboard::key::Named::Tab) => Some(Message::TabPressed),
-            Key::Named(keyboard::key::Named::Escape) => Some(Message::EscapePressed),
-            _ => None,
-        },
+        iced::Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => {
+            // Browser-style zoom shortcuts — Ctrl+= (no shift needed for
+            // the unshifted "=" key) / Ctrl+- / Ctrl+0 to reset.
+            if modifiers.control() {
+                if let Key::Character(c) = &key {
+                    match c.as_str() {
+                        "=" | "+" => return Some(Message::ScaleUp),
+                        "-" => return Some(Message::ScaleDown),
+                        "0" => return Some(Message::ScaleReset),
+                        _ => {}
+                    }
+                }
+            }
+            match key {
+                Key::Named(keyboard::key::Named::Tab) => Some(Message::TabPressed),
+                Key::Named(keyboard::key::Named::Escape) => Some(Message::EscapePressed),
+                _ => None,
+            }
+        }
         iced::Event::Keyboard(keyboard::Event::ModifiersChanged(m)) => {
             Some(Message::ModifiersChanged(m))
         }
@@ -435,10 +464,11 @@ pub fn view(state: &TuxMix) -> Element<'_, Message> {
 /// A section label (HARDWARE INPUTS, SOFTWARE PLAYBACK, ...) with an accent
 /// tick and a rule trailing off to the right, instead of bare gray text that
 /// blends into the background.
-fn section_header(label: &str) -> Element<'_, Message> {
+fn section_header(label: &str, scale: f32) -> Element<'_, Message> {
     row![
-        container(iced::widget::Space::new().width(3).height(12)).style(theme::accent_bar),
-        text(label).color(theme::TEXT_PRIMARY).size(theme::TEXT_MD),
+        container(iced::widget::Space::new().width(3.0 * scale).height(12.0 * scale))
+            .style(theme::accent_bar),
+        text(label).color(theme::TEXT_PRIMARY).size(theme::TEXT_MD * scale),
         iced::widget::rule::horizontal(1),
     ]
     .spacing(8)
@@ -448,10 +478,10 @@ fn section_header(label: &str) -> Element<'_, Message> {
 
 /// Wraps a cluster of related controls in a recessed "chip" so the top bar
 /// reads as grouped sections instead of one long undifferentiated row.
-fn chip<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+fn chip<'a>(content: impl Into<Element<'a, Message>>, scale: f32) -> Element<'a, Message> {
     container(content)
         .style(theme::chip)
-        .padding([5, 12])
+        .padding([5.0 * scale, 12.0 * scale])
         .into()
 }
 
@@ -459,8 +489,8 @@ fn chip<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
 /// lighter-weight than another chip boundary, just enough to break up
 /// dense runs of controls (Scene tools / Submix / Clock) without adding a
 /// third level of boxing.
-fn v_divider<'a>() -> Element<'a, Message> {
-    container(iced::widget::Space::new().width(1).height(16))
+fn v_divider<'a>(scale: f32) -> Element<'a, Message> {
+    container(iced::widget::Space::new().width(1).height(16.0 * scale))
         .style(|_theme: &iced::Theme| container::Style {
             background: Some(iced::Background::Color(theme::BORDER)),
             ..container::Style::default()
@@ -469,6 +499,7 @@ fn v_divider<'a>() -> Element<'a, Message> {
 }
 
 fn top_bar(state: &TuxMix) -> Element<'_, Message> {
+    let scale = state.ui_scale;
     let status_color = if state.device.is_mock() {
         theme::YSIM
     } else {
@@ -485,14 +516,15 @@ fn top_bar(state: &TuxMix) -> Element<'_, Message> {
     // this is "what am I even looking at".
     let device_chip = chip(
         row![
-            text("●").color(status_color).size(theme::TEXT_SM),
+            text("●").color(status_color).size(theme::TEXT_SM * scale),
             text(state.device.model_name())
                 .color(theme::TEXT_PRIMARY)
-                .size(theme::TEXT_LG),
-            text(status_label).color(status_color).size(theme::TEXT_MD),
+                .size(theme::TEXT_LG * scale),
+            text(status_label).color(status_color).size(theme::TEXT_MD * scale),
         ]
         .spacing(6)
         .align_y(iced::Alignment::Center),
+        scale,
     );
 
     // View switch: a plain segmented toggle, not a chip — it's navigation,
@@ -501,12 +533,12 @@ fn top_bar(state: &TuxMix) -> Element<'_, Message> {
     // (previously only the active view's name showed, with no click
     // target — Tab-key was the only way to switch).
     let tab_toggle = row![
-        iced::widget::button(text("MIXER").size(theme::TEXT_MD))
-            .padding([4, 10])
+        iced::widget::button(text("MIXER").size(theme::TEXT_MD * scale))
+            .padding([4.0 * scale, 10.0 * scale])
             .style(theme::tab_toggle(!state.show_matrix))
             .on_press(Message::TabPressed),
-        iced::widget::button(text("MATRIX").size(theme::TEXT_MD))
-            .padding([4, 10])
+        iced::widget::button(text("MATRIX").size(theme::TEXT_MD * scale))
+            .padding([4.0 * scale, 10.0 * scale])
             .style(theme::tab_toggle(state.show_matrix))
             .on_press(Message::TabPressed),
     ]
@@ -519,23 +551,23 @@ fn top_bar(state: &TuxMix) -> Element<'_, Message> {
     let scene_list = state.scene_list.clone();
     let session = chip(
         row![
-            text("Scene").color(theme::TEXT_SEC).size(theme::TEXT_XS),
+            text("Scene").color(theme::TEXT_SEC).size(theme::TEXT_XS * scale),
             iced::widget::text_input("name", &state.scene_name)
                 .on_input(Message::SceneNameChanged)
                 .on_submit(Message::SceneSave)
                 .style(theme::text_input)
-                .width(Length::Fixed(90.0))
-                .size(theme::TEXT_MD),
-            iced::widget::button(text("Save").size(theme::TEXT_MD))
+                .width(Length::Fixed(90.0 * scale))
+                .size(theme::TEXT_MD * scale),
+            iced::widget::button(text("Save").size(theme::TEXT_MD * scale))
                 .style(theme::plain_button)
                 .on_press(Message::SceneSave),
             pick_list(scene_list, None::<String>, Message::SceneLoad)
                 .placeholder("load...")
                 .style(theme::pick_list)
                 .menu_style(theme::menu)
-                .text_size(theme::TEXT_MD),
-            v_divider(),
-            text("Submix").color(theme::TEXT_SEC).size(theme::TEXT_XS),
+                .text_size(theme::TEXT_MD * scale),
+            v_divider(scale),
+            text("Submix").color(theme::TEXT_SEC).size(theme::TEXT_XS * scale),
             pick_list(
                 OUT_LABELS.to_vec(),
                 Some(OUT_LABELS[state.sel_out]),
@@ -546,18 +578,19 @@ fn top_bar(state: &TuxMix) -> Element<'_, Message> {
             )
             .style(theme::pick_list)
             .menu_style(theme::menu)
-            .text_size(theme::TEXT_MD),
-            v_divider(),
+            .text_size(theme::TEXT_MD * scale),
+            v_divider(scale),
             text(state.device.settings().clock_source.clone())
                 .color(theme::TEXT_SEC)
-                .size(theme::TEXT_XS),
+                .size(theme::TEXT_XS * scale),
         ]
         .spacing(8)
         .align_y(iced::Alignment::Center),
+        scale,
     );
 
     let bar = row![
-        text("TuxMix").color(theme::ACCENT).size(theme::TEXT_XL),
+        text("TuxMix").color(theme::ACCENT).size(theme::TEXT_XL * scale),
         device_chip,
         tab_toggle,
         iced::widget::Space::new().width(Length::Fill),
@@ -568,7 +601,7 @@ fn top_bar(state: &TuxMix) -> Element<'_, Message> {
 
     container(bar)
         .style(theme::top_bar)
-        .padding([10, 16])
+        .padding([10.0 * scale, 16.0 * scale])
         .width(Length::Fill)
         .into()
 }
@@ -611,6 +644,7 @@ fn mixer_view(state: &TuxMix) -> Element<'_, Message> {
             drag_range,
             modifiers: state.modifiers,
             collapsed: state.collapsed.contains(&cid),
+            scale: state.ui_scale,
         }));
     }
 
@@ -642,6 +676,7 @@ fn mixer_view(state: &TuxMix) -> Element<'_, Message> {
             drag_range,
             modifiers: state.modifiers,
             collapsed: state.collapsed.contains(&cid),
+            scale: state.ui_scale,
         }));
     }
 
@@ -672,29 +707,31 @@ fn mixer_view(state: &TuxMix) -> Element<'_, Message> {
             drag_range,
             modifiers: state.modifiers,
             collapsed: state.collapsed.contains(&cid),
+            scale: state.ui_scale,
         }));
     }
 
+    let scale = state.ui_scale;
     let body = column![
-        section_header("HARDWARE INPUTS"),
+        section_header("HARDWARE INPUTS", scale),
         text(format!(
             "Submix: {} - Tab for Matrix",
             OUT_LABELS[state.sel_out]
         ))
         .color(theme::TEXT_SEC)
-        .size(theme::TEXT_XS),
+        .size(theme::TEXT_XS * scale),
         scrollable(input_strips)
             .direction(scrollable::Direction::Horizontal(
                 theme::thin_scrollbar()
             ))
             .style(theme::scrollable),
-        section_header("SOFTWARE PLAYBACK"),
+        section_header("SOFTWARE PLAYBACK", scale),
         scrollable(pb_strips)
             .direction(scrollable::Direction::Horizontal(
                 theme::thin_scrollbar()
             ))
             .style(theme::scrollable),
-        section_header("HARDWARE OUTPUTS"),
+        section_header("HARDWARE OUTPUTS", scale),
         scrollable(out_strips)
             .direction(scrollable::Direction::Horizontal(
                 theme::thin_scrollbar()
@@ -712,11 +749,12 @@ fn mixer_view(state: &TuxMix) -> Element<'_, Message> {
 }
 
 fn matrix_view(state: &TuxMix) -> Element<'_, Message> {
+    let scale = state.ui_scale;
     let body = column![
-        section_header("MATRIX MIXER"),
+        section_header("MATRIX MIXER", scale),
         text("Volume per input per output - Tab to return")
             .color(theme::TEXT_SEC)
-            .size(theme::TEXT_XS),
+            .size(theme::TEXT_XS * scale),
         matrix::view(state),
     ]
     .spacing(8);
