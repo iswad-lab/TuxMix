@@ -1,0 +1,12 @@
+[package]
+name = "tuxmix-tui"
+version = "0.1.0"
+edition = "2021"
+description = "TUI for TuxMix — control your RME interface from the terminal"
+
+[dependencies]
+tuxmix-core = { path = "../tuxmix-core" }
+ratatui = "0.29"
+crossterm = "0.28"
+log = "0.4"
+env_logger = "0.11"

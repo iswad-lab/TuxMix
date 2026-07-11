@@ -1,8 +1,8 @@
-//! `tinyface-gui` — Graphical RME interface controller.
+//! `tuxmix-gui` — Graphical RME interface controller.
 //!
 //! ```bash
-//! cargo run -p tinyface-gui              # with real hardware
-//! cargo run -p tinyface-gui -- --mock    # simulation
+//! cargo run -p tuxmix-gui              # with real hardware
+//! cargo run -p tuxmix-gui -- --mock    # simulation
 //! ```
 
 mod app;

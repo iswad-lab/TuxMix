@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-    "tinyface-core",
-    "tinyface-tui",
-    "tinyface-gui",
+    "tuxmix-core",
+    "tuxmix-tui",
+    "tuxmix-gui",
 ]

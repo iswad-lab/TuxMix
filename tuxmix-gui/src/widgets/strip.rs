@@ -4,7 +4,7 @@
 use iced::keyboard::Modifiers;
 use iced::widget::{button, column, container, mouse_area, row, text, text_input};
 use iced::{Color, Element, Length};
-use tinyface_core::ChannelId;
+use tuxmix_core::ChannelId;
 
 use crate::app::{db_text, short_label, Message};
 use crate::theme;

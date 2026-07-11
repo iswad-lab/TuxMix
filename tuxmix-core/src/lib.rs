@@ -1,4 +1,4 @@
-//! `tinyface-core` — Abstraction layer for RME audio interfaces on Linux.
+//! `tuxmix-core` — Abstraction layer for RME audio interfaces on Linux.
 //!
 //! This crate provides a hardware-agnostic interface for controlling
 //! RME audio interfaces through ALSA mixer controls.

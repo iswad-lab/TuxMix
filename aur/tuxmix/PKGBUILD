@@ -1,18 +1,18 @@
 # Maintainer: iswad-lab <iswad@lab.dev>
 
-# tinyface — Open-source TotalMix replacement for RME audio interfaces on Linux
+# TuxMix — Open-source TotalMix replacement for RME audio interfaces on Linux
 #
 # Building from source requires Rust (cargo) and ALSA development headers.
 #
 # When a new version is tagged on GitHub, update pkgver and the source
 # tarball checksum below.
 
-pkgname=tinyface
+pkgname=tuxmix
 pkgver=0.1.0
 pkgrel=1
 pkgdesc="Open-source TotalMix replacement for RME audio interfaces on Linux"
 arch=('x86_64')
-url="https://github.com/iswad-lab/Tinyface"
+url="https://github.com/iswad-lab/TuxMix"
 license=('GPL3')
 depends=(
     'alsa-lib'
@@ -32,11 +32,11 @@ build() {
 package() {
     cd "${srcdir}/${pkgname}-${pkgver}"
 
-    install -Dm755 "target/release/tinyface-gui" \
-        "${pkgdir}/usr/bin/tinyface"
-    install -Dm755 "target/release/tinyface-tui" \
-        "${pkgdir}/usr/bin/tinyface-tui"
+    install -Dm755 "target/release/tuxmix-gui" \
+        "${pkgdir}/usr/bin/tuxmix"
+    install -Dm755 "target/release/tuxmix-tui" \
+        "${pkgdir}/usr/bin/tuxmix-tui"
 
     install -Dm644 "README.md" \
-        "${pkgdir}/usr/share/doc/tinyface/README.md"
+        "${pkgdir}/usr/share/doc/tuxmix/README.md"
 }

@@ -4,7 +4,7 @@ use iced::{window, Element, Length, Subscription, Task};
 use std::collections::HashMap;
 use std::time::Duration;
 
-use tinyface_core::{
+use tuxmix_core::{
     BabyfacePro, ChannelId, ChannelType, MockBabyfacePro, RmeDevice, Scene,
 };
 
@@ -73,64 +73,64 @@ impl RmeDevice for DeviceHandle {
     fn output_pair_count(&self) -> usize {
         delegate!(self, output_pair_count)
     }
-    fn open() -> Result<Self, tinyface_core::Error> {
+    fn open() -> Result<Self, tuxmix_core::Error> {
         unreachable!()
     }
-    fn inputs(&self) -> &[tinyface_core::InputChannel] {
+    fn inputs(&self) -> &[tuxmix_core::InputChannel] {
         delegate!(self, inputs)
     }
-    fn inputs_mut(&mut self) -> &mut [tinyface_core::InputChannel] {
+    fn inputs_mut(&mut self) -> &mut [tuxmix_core::InputChannel] {
         delegate!(self, inputs_mut)
     }
-    fn playbacks(&self) -> &[tinyface_core::PlaybackChannel] {
+    fn playbacks(&self) -> &[tuxmix_core::PlaybackChannel] {
         delegate!(self, playbacks)
     }
-    fn playbacks_mut(&mut self) -> &mut [tinyface_core::PlaybackChannel] {
+    fn playbacks_mut(&mut self) -> &mut [tuxmix_core::PlaybackChannel] {
         delegate!(self, playbacks_mut)
     }
-    fn outputs(&self) -> &[tinyface_core::OutputChannel] {
+    fn outputs(&self) -> &[tuxmix_core::OutputChannel] {
         delegate!(self, outputs)
     }
-    fn outputs_mut(&mut self) -> &mut [tinyface_core::OutputChannel] {
+    fn outputs_mut(&mut self) -> &mut [tuxmix_core::OutputChannel] {
         delegate!(self, outputs_mut)
     }
-    fn settings(&self) -> &tinyface_core::DeviceSettings {
+    fn settings(&self) -> &tuxmix_core::DeviceSettings {
         delegate!(self, settings)
     }
-    fn settings_mut(&mut self) -> &mut tinyface_core::DeviceSettings {
+    fn settings_mut(&mut self) -> &mut tuxmix_core::DeviceSettings {
         delegate!(self, settings_mut)
     }
-    fn set_volume(&mut self, ch: ChannelId, out: usize, v: f32) -> Result<(), tinyface_core::Error> {
+    fn set_volume(&mut self, ch: ChannelId, out: usize, v: f32) -> Result<(), tuxmix_core::Error> {
         delegate!(self, set_volume(ch, out, v))
     }
-    fn volume(&self, ch: ChannelId, out: usize) -> Result<f32, tinyface_core::Error> {
+    fn volume(&self, ch: ChannelId, out: usize) -> Result<f32, tuxmix_core::Error> {
         delegate!(self, volume(ch, out))
     }
-    fn set_pan(&mut self, ch: ChannelId, out: usize, p: i8) -> Result<(), tinyface_core::Error> {
+    fn set_pan(&mut self, ch: ChannelId, out: usize, p: i8) -> Result<(), tuxmix_core::Error> {
         delegate!(self, set_pan(ch, out, p))
     }
-    fn pan(&self, ch: ChannelId, out: usize) -> Result<i8, tinyface_core::Error> {
+    fn pan(&self, ch: ChannelId, out: usize) -> Result<i8, tuxmix_core::Error> {
         delegate!(self, pan(ch, out))
     }
-    fn set_mute(&mut self, ch: ChannelId, m: bool) -> Result<(), tinyface_core::Error> {
+    fn set_mute(&mut self, ch: ChannelId, m: bool) -> Result<(), tuxmix_core::Error> {
         delegate!(self, set_mute(ch, m))
     }
-    fn mute(&self, ch: ChannelId) -> Result<bool, tinyface_core::Error> {
+    fn mute(&self, ch: ChannelId) -> Result<bool, tuxmix_core::Error> {
         delegate!(self, mute(ch))
     }
-    fn set_solo(&mut self, ch: ChannelId, s: bool) -> Result<(), tinyface_core::Error> {
+    fn set_solo(&mut self, ch: ChannelId, s: bool) -> Result<(), tuxmix_core::Error> {
         delegate!(self, set_solo(ch, s))
     }
-    fn solo(&self, ch: ChannelId) -> Result<bool, tinyface_core::Error> {
+    fn solo(&self, ch: ChannelId) -> Result<bool, tuxmix_core::Error> {
         delegate!(self, solo(ch))
     }
     fn capture_scene(&self) -> Scene {
         delegate!(self, capture_scene)
     }
-    fn apply_scene(&mut self, s: &Scene) -> Result<(), tinyface_core::Error> {
+    fn apply_scene(&mut self, s: &Scene) -> Result<(), tuxmix_core::Error> {
         delegate!(self, apply_scene(s))
     }
-    fn poll_events(&mut self) -> Result<(), tinyface_core::Error> {
+    fn poll_events(&mut self) -> Result<(), tuxmix_core::Error> {
         delegate!(self, poll_events)
     }
 }
@@ -257,7 +257,7 @@ pub fn new(mock: bool) -> TinyFace {
 
 pub fn title(state: &TinyFace) -> String {
     let _ = state;
-    "Tinyface - RME Mixer".into()
+    "TuxMix - RME Mixer".into()
 }
 
 pub fn update(state: &mut TinyFace, message: Message) -> Task<Message> {
@@ -483,7 +483,7 @@ fn top_bar(state: &TinyFace) -> Element<'_, Message> {
     );
 
     let bar = row![
-        text("Tinyface").color(theme::ACCENT).size(20),
+        text("TuxMix").color(theme::ACCENT).size(20),
         device_chip,
         tab_chip,
         iced::widget::Space::new().width(Length::Fill),

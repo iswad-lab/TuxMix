@@ -5,7 +5,7 @@
 //!
 //! Use `--mock` to run the TUI/GUI without a physical device:
 //! ```bash
-//! cargo run -p tinyface-gui -- --mock
+//! cargo run -p tuxmix-gui -- --mock
 //! ```
 
 use rand::Rng;

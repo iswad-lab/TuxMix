@@ -4,15 +4,15 @@
   <img src="https://img.shields.io/badge/Rust-❤-red" alt="Rust">
 </p>
 
-# Tinyface
+# TuxMix
 
 ### Open-source TotalMix replacement for RME audio interfaces on Linux.
 
-Tinyface gives you full control over your RME interface's **hardware DSP mixer** directly from Linux — no TotalMix, no Windows, no macOS required.
+TuxMix gives you full control over your RME interface's **hardware DSP mixer** directly from Linux — no TotalMix, no Windows, no macOS required.
 
 ---
 
-## Why Tinyface exists
+## Why tuxmix exists
 
 RME makes incredible audio interfaces. Their hardware is legendary on Linux thanks to solid ALSA drivers. **But TotalMix doesn't exist on Linux.** Users have been stuck:
 
@@ -21,7 +21,7 @@ RME makes incredible audio interfaces. Their hardware is legendary on Linux than
 - ⛔ Using cryptic `amixer` scripts
 - ⛔ Switching OS just to use their €1000+ interface
 
-**Tinyface fixes that.**
+**tuxmix fixes that.**
 
 When RME released TotalMix 2.0 in May 2026, the #1 request was loud and clear:
 
@@ -33,7 +33,7 @@ When RME released TotalMix 2.0 in May 2026, the #1 request was loud and clear:
 >
 > *"RME would be king if releasing Linux version of TotalMix."*
 
-Tinyface is the answer.
+TuxMix is the answer.
 
 ---
 
@@ -51,7 +51,7 @@ Tinyface is the answer.
 | ✅ Matrix mixer view (submixes) | Done |
 | ✅ Scene capture / save / restore (JSON) | Done |
 | ✅ Simulated mode (`--mock` for dev without hardware) | Done |
-| ✅ Desktop GUI (egui) | Done |
+| ✅ Desktop GUI (iced) | Done |
 | ✅ Terminal TUI (ratatui) | Done |
 | ⏳ VU meters (needs USB RE) | Planned |
 | ⏳ Loopback control | Planned |
@@ -64,8 +64,8 @@ Tinyface is the answer.
 ### With hardware
 
 ```bash
-cargo run -p tinyface-gui          # Desktop GUI
-cargo run -p tinyface-tui          # Terminal TUI
+cargo run -p tuxmix-gui          # Desktop GUI
+cargo run -p tuxmix-tui          # Terminal TUI
 ```
 
 ### Without hardware (simulated mode)
@@ -73,8 +73,8 @@ cargo run -p tinyface-tui          # Terminal TUI
 Don't have your RME card yet? Develop the full UI with a simulated device:
 
 ```bash
-cargo run -p tinyface-gui -- --mock
-cargo run -p tinyface-tui -- --mock
+cargo run -p tuxmix-gui -- --mock
+cargo run -p tuxmix-tui -- --mock
 ```
 
 The mock simulates all 12 inputs, 12 playbacks, animated VU meters, and all controls — perfect for development or evaluation.
@@ -82,7 +82,7 @@ The mock simulates all 12 inputs, 12 playbacks, animated VU meters, and all cont
 ### From AUR (Arch Linux)
 
 ```bash
-yay -S tinyface
+yay -S tuxmix
 ```
 
 ---
@@ -90,16 +90,16 @@ yay -S tinyface
 ## Architecture
 
 ```
-Tinyface/
-├── tinyface-core/     Hardware-agnostic RME control library (Rust + ALSA)
+TuxMix/
+├── tuxmix-core/     Hardware-agnostic RME control library (Rust + ALSA)
 │   ├── device.rs      RmeDevice trait — add support for any RME interface
 │   ├── babyface.rs    Babyface Pro FS implementation
 │   ├── mock.rs        Simulated device for development & CI
 │   ├── channel.rs     Input & playback channel model (per-output volumes)
 │   ├── mixer.rs       ALSA mixer wrapper
 │   └── scene.rs       Scene save/restore (JSON serialization)
-├── tinyface-tui/      Terminal UI (ratatui + crossterm)
-└── tinyface-gui/      Desktop GUI (egui / eframe)
+├── tuxmix-tui/      Terminal UI (ratatui + crossterm)
+└── tuxmix-gui/      Desktop GUI (iced)
 ```
 
 The core library exposes a clean `RmeDevice` trait. Adding support for a new RME interface is as simple as implementing the trait with the right ALSA control mapping.
@@ -126,7 +126,7 @@ The core library exposes a clean `RmeDevice` trait. Adding support for a new RME
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│  Tinyface | Babyface Pro FS (mock) ● | [Tab: Mixer] | ⏱ ... │
+│  tuxmix | Babyface Pro FS (mock) ● | [Tab: Mixer] | ⏱ ... │
 ├──────────────────────────────────────────────────────────────┤
 │                                                              │
 │   HARDWARE INPUTS  (Submix: AN1/2)                          │
@@ -165,8 +165,8 @@ Press **Tab** to toggle between Mixer view and Matrix view.
 ## Building from source
 
 ```bash
-git clone https://github.com/iswad-lab/Tinyface
-cd Tinyface
+git clone https://github.com/iswad-lab/tuxmix
+cd tuxmix
 cargo build --release
 ```
 
@@ -176,21 +176,21 @@ Dependencies: `rustc`, `cargo`, `alsa-lib` (dev headers).
 
 ## Contributing
 
-Tinyface is in early development and contributions are welcome.
+TuxMix is in early development and contributions are welcome.
 
 - **Rust / ALSA**: Help implement the real Babyface Pro FS ALSA controls
-- **UI / UX**: Improve the egui GUI or ratatui TUI
+- **UI / UX**: Improve the iced GUI or ratatui TUI
 - **New hardware**: Add support for your RME interface (implement `RmeDevice`)
 - **USB reverse engineering**: Help discover the protocol for VU meters
 - **Testing**: Run `cargo test` and report issues
 
-See the [open issues](https://github.com/iswad-lab/Tinyface/issues) for starter tasks.
+See the [open issues](https://github.com/iswad-lab/tuxmix/issues) for starter tasks.
 
 ---
 
 ## How it compares
 
-| | TotalMix FX (Windows/Mac) | bbfpromix | **Tinyface** |
+| | TotalMix FX (Windows/Mac) | bbfpromix | **tuxmix** |
 |---|---|---|---|
 | Linux support | ❌ | ✅ (Babyface only) | ✅ |
 | Multi-card | ✅ | ❌ | 🟢 designed for it |
@@ -210,7 +210,7 @@ GPL-3.0-or-later — see [LICENSE](LICENSE).
 ---
 
 <p align="center">
-  <b>Tinyface is not affiliated with RME GmbH.</b>
+  <b>tuxmix is not affiliated with RME GmbH.</b>
   <br>
   RME, TotalMix, Babyface, Fireface, MADIface are registered trademarks of RME GmbH.
   <br>

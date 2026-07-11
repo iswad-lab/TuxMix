@@ -3,7 +3,7 @@
 
 use iced::widget::{column, container, row, scrollable, text};
 use iced::Element;
-use tinyface_core::{ChannelId, RmeDevice};
+use tuxmix_core::{ChannelId, RmeDevice};
 
 use crate::app::{Message, TinyFace, OUT_LABELS};
 use crate::theme;

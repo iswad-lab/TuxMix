@@ -1,11 +1,11 @@
 //! Scene (preset) file I/O — ported verbatim from v1.
 
 use std::path::PathBuf;
-use tinyface_core::Scene;
+use tuxmix_core::Scene;
 
 pub fn scenes_dir() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-    let dir = PathBuf::from(home).join(".local/share/tinyface/scenes");
+    let dir = PathBuf::from(home).join(".local/share/tuxmix/scenes");
     let _ = std::fs::create_dir_all(&dir);
     dir
 }
