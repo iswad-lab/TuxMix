@@ -201,6 +201,30 @@ pub struct TinyFace {
     pub scene_name: String,
     pub scene_list: Vec<String>,
     pub modifiers: keyboard::Modifiers,
+    /// Ballistics-smoothed meter values shown in the UI — the raw values
+    /// from `device.input_meter`/`playback_meter` jump straight to their new
+    /// reading every tick, which reads as flickery rather than a real meter
+    /// needle. Smoothed here instead of at the device layer so it applies
+    /// uniformly regardless of data source (mock or real hardware).
+    pub input_meters: Vec<f32>,
+    pub playback_meters: Vec<f32>,
+}
+
+/// Fast rise per 50ms tick (~25ms time constant) — a meter should jump to a
+/// new peak almost instantly so transients don't feel muted.
+const METER_ATTACK: f32 = 0.7;
+/// Slow fall per 50ms tick (~300ms time constant) — real meter ballistics
+/// decay smoothly instead of snapping down, which is most of what reads as
+/// "fluid" versus "instant/robotic".
+const METER_RELEASE: f32 = 0.1;
+
+fn smooth_meter(current: f32, target: f32) -> f32 {
+    let alpha = if target >= current {
+        METER_ATTACK
+    } else {
+        METER_RELEASE
+    };
+    current + (target - current) * alpha
 }
 
 pub fn new(mock: bool) -> TinyFace {
@@ -212,6 +236,8 @@ pub fn new(mock: bool) -> TinyFace {
             DeviceHandle::open_mock()
         })
     };
+    let n_inputs = device.inputs().len();
+    let n_playbacks = device.playbacks().len();
     TinyFace {
         device,
         sel_out: 0,
@@ -224,6 +250,8 @@ pub fn new(mock: bool) -> TinyFace {
         scene_name: String::new(),
         scene_list: list_scene_files(),
         modifiers: keyboard::Modifiers::default(),
+        input_meters: vec![0.0; n_inputs],
+        playback_meters: vec![0.0; n_playbacks],
     }
 }
 
@@ -236,6 +264,12 @@ pub fn update(state: &mut TinyFace, message: Message) -> Task<Message> {
     match message {
         Message::Tick => {
             let _ = state.device.poll_events();
+            for (i, m) in state.input_meters.iter_mut().enumerate() {
+                *m = smooth_meter(*m, state.device.input_meter(i));
+            }
+            for (i, m) in state.playback_meters.iter_mut().enumerate() {
+                *m = smooth_meter(*m, state.device.playback_meter(i));
+            }
         }
         Message::TabPressed => {
             state.show_matrix = !state.show_matrix;
@@ -477,7 +511,7 @@ fn mixer_view(state: &TinyFace) -> Element<'_, Message> {
         prev_type = Some(ch.channel_type);
 
         let cid = ChannelId::Input(i);
-        let meter = state.device.input_meter(i);
+        let meter = state.input_meters.get(i).copied().unwrap_or(0.0);
         let has_48v = ch.channel_type == ChannelType::Mic;
         let phantom = *state.phantom_overrides.get(&i).unwrap_or(&ch.phantom);
         let pad = *state.pad_overrides.get(&i).unwrap_or(&ch.pad);
@@ -510,7 +544,7 @@ fn mixer_view(state: &TinyFace) -> Element<'_, Message> {
     let mut pb_strips = row![].spacing(6);
     for (i, ch) in state.device.playbacks().iter().enumerate() {
         let cid = ChannelId::Playback(i);
-        let meter = state.device.playback_meter(i);
+        let meter = state.playback_meters.get(i).copied().unwrap_or(0.0);
         let drag_range = state
             .drag_range
             .and_then(|(dc, lo, hi)| (dc == cid).then_some((lo, hi)));
