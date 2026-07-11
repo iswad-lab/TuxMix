@@ -5,13 +5,13 @@ use iced::widget::{column, container, row, scrollable, text};
 use iced::Element;
 use tuxmix_core::{ChannelId, RmeDevice};
 
-use crate::app::{Message, TinyFace, OUT_LABELS};
+use crate::app::{Message, TuxMix, OUT_LABELS};
 use crate::theme;
 use crate::widgets::fader::{fader, Fader};
 
 const CELL_H: f32 = 32.0;
 
-pub fn view(state: &TinyFace) -> Element<'_, Message> {
+pub fn view(state: &TuxMix) -> Element<'_, Message> {
     let ni = state.device.inputs().len();
     let np = state.device.playbacks().len();
 

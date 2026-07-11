@@ -21,7 +21,7 @@ fn main() -> iced::Result {
     iced::application(move || app::new(mock), app::update, app::view)
         .title(app::title)
         .subscription(app::subscription)
-        .theme(|_state: &app::TinyFace| iced::Theme::Dark)
+        .theme(|_state: &app::TuxMix| iced::Theme::Dark)
         .window(window::Settings {
             size: Size::new(1280.0, 800.0),
             min_size: Some(Size::new(960.0, 600.0)),

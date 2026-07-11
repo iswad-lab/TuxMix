@@ -189,7 +189,7 @@ pub enum Message {
 
 // ── App state ────────────────────────────────────────────────────
 
-pub struct TinyFace {
+pub struct TuxMix {
     pub device: DeviceHandle,
     pub sel_out: usize,
     pub show_matrix: bool,
@@ -227,7 +227,7 @@ fn smooth_meter(current: f32, target: f32) -> f32 {
     current + (target - current) * alpha
 }
 
-pub fn new(mock: bool) -> TinyFace {
+pub fn new(mock: bool) -> TuxMix {
     let device = if mock {
         DeviceHandle::open_mock()
     } else {
@@ -238,7 +238,7 @@ pub fn new(mock: bool) -> TinyFace {
     };
     let n_inputs = device.inputs().len();
     let n_playbacks = device.playbacks().len();
-    TinyFace {
+    TuxMix {
         device,
         sel_out: 0,
         show_matrix: false,
@@ -255,12 +255,12 @@ pub fn new(mock: bool) -> TinyFace {
     }
 }
 
-pub fn title(state: &TinyFace) -> String {
+pub fn title(state: &TuxMix) -> String {
     let _ = state;
     "TuxMix - RME Mixer".into()
 }
 
-pub fn update(state: &mut TinyFace, message: Message) -> Task<Message> {
+pub fn update(state: &mut TuxMix, message: Message) -> Task<Message> {
     match message {
         Message::Tick => {
             let _ = state.device.poll_events();
@@ -343,7 +343,7 @@ pub fn update(state: &mut TinyFace, message: Message) -> Task<Message> {
     Task::none()
 }
 
-pub fn subscription(_state: &TinyFace) -> Subscription<Message> {
+pub fn subscription(_state: &TuxMix) -> Subscription<Message> {
     Subscription::batch([
         iced::time::every(Duration::from_millis(50)).map(|_| Message::Tick),
         iced::event::listen_with(handle_global_event),
@@ -370,7 +370,7 @@ fn handle_global_event(
 
 // ── View ─────────────────────────────────────────────────────────
 
-pub fn view(state: &TinyFace) -> Element<'_, Message> {
+pub fn view(state: &TuxMix) -> Element<'_, Message> {
     let top = top_bar(state);
     let content = if state.show_matrix {
         matrix_view(state)
@@ -404,7 +404,7 @@ fn chip<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
         .into()
 }
 
-fn top_bar(state: &TinyFace) -> Element<'_, Message> {
+fn top_bar(state: &TuxMix) -> Element<'_, Message> {
     let status_color = if state.device.is_mock() {
         theme::YSIM
     } else {
@@ -501,7 +501,7 @@ fn top_bar(state: &TinyFace) -> Element<'_, Message> {
         .into()
 }
 
-fn mixer_view(state: &TinyFace) -> Element<'_, Message> {
+fn mixer_view(state: &TuxMix) -> Element<'_, Message> {
     let mut input_strips = row![].spacing(6);
     let mut prev_type: Option<ChannelType> = None;
     for (i, ch) in state.device.inputs().iter().enumerate() {
@@ -636,7 +636,7 @@ fn mixer_view(state: &TinyFace) -> Element<'_, Message> {
         .into()
 }
 
-fn matrix_view(state: &TinyFace) -> Element<'_, Message> {
+fn matrix_view(state: &TuxMix) -> Element<'_, Message> {
     let body = column![
         section_header("MATRIX MIXER"),
         text("Volume per input per output - Tab to return")
