@@ -250,10 +250,27 @@ const METER_RADIUS: f32 = 3.0;
 const CLIP_H: f32 = 5.0;
 const CLIP_GAP: f32 = 3.0;
 
+/// Linear interpolation between two colors — `t` is clamped to [0, 1].
+fn lerp_color(a: Color, b: Color, t: f32) -> Color {
+    let t = t.clamp(0.0, 1.0);
+    Color {
+        r: a.r + (b.r - a.r) * t,
+        g: a.g + (b.g - a.g) * t,
+        b: a.b + (b.b - a.b) * t,
+        a: a.a + (b.a - a.a) * t,
+    }
+}
+
+/// Above this level the fill starts tinting toward red — a continuous
+/// warning rather than a binary clip light, so the meter reads as "getting
+/// hot" well before it actually clips.
+const HOT_THRESHOLD: f32 = 0.85;
+
 /// A slim rounded pill instead of a wide block — one calm color for the
-/// signal, and a separate clip "LED" above the track that only lights up
-/// near 0 dBFS, rather than a green→yellow→red gradient spanning the whole
-/// range. Reads as a minimal modern level indicator, not a traffic light.
+/// signal, tinting progressively from green toward red above
+/// `HOT_THRESHOLD`, plus a separate clip "LED" above the track that lights
+/// up near 0 dBFS. Reads as a minimal modern level indicator, not a
+/// traffic light, while still giving continuous feedback as it climbs.
 fn draw_meter(frame: &mut Frame, r: Rectangle, level: f32) {
     let l = level.clamp(0.0, 1.0);
 
@@ -270,6 +287,8 @@ fn draw_meter(frame: &mut Frame, r: Rectangle, level: f32) {
     if l > 0.0 {
         let fill_h = track.height * l;
         let fill_pos = Point::new(track.x, track.y + track.height - fill_h);
+        let hot_t = (l - HOT_THRESHOLD) / (1.0 - HOT_THRESHOLD);
+        let fill_color = lerp_color(theme::MGREEN, theme::MRED, hot_t);
         frame.fill(
             &Path::new(|b| {
                 b.rounded_rectangle(
@@ -278,7 +297,7 @@ fn draw_meter(frame: &mut Frame, r: Rectangle, level: f32) {
                     METER_RADIUS.into(),
                 )
             }),
-            theme::MGREEN,
+            fill_color,
         );
     }
 
@@ -675,4 +694,32 @@ where
         .width(Length::Fixed(PAN_W))
         .height(Length::Fixed(PAN_H))
         .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fill_stays_green_below_hot_threshold() {
+        let c = lerp_color(theme::MGREEN, theme::MRED, (0.5 - HOT_THRESHOLD) / (1.0 - HOT_THRESHOLD));
+        assert_eq!(c, theme::MGREEN);
+    }
+
+    #[test]
+    fn fill_turns_fully_red_at_full_level() {
+        let hot_t = (1.0 - HOT_THRESHOLD) / (1.0 - HOT_THRESHOLD);
+        let c = lerp_color(theme::MGREEN, theme::MRED, hot_t);
+        assert!((c.r - theme::MRED.r).abs() < 1e-4);
+        assert!((c.g - theme::MRED.g).abs() < 1e-4);
+        assert!((c.b - theme::MRED.b).abs() < 1e-4);
+    }
+
+    #[test]
+    fn fill_is_between_green_and_red_mid_hot_zone() {
+        let hot_t = ((HOT_THRESHOLD + 1.0) / 2.0 - HOT_THRESHOLD) / (1.0 - HOT_THRESHOLD);
+        let c = lerp_color(theme::MGREEN, theme::MRED, hot_t);
+        assert!(c.r > theme::MGREEN.r && c.r < theme::MRED.r);
+        assert!(c.g < theme::MGREEN.g && c.g > theme::MRED.g);
+    }
 }

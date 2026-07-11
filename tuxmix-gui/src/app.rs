@@ -209,28 +209,64 @@ pub struct TuxMix {
     /// reading every tick, which reads as flickery rather than a real meter
     /// needle. Smoothed here instead of at the device layer so it applies
     /// uniformly regardless of data source (mock or real hardware).
-    pub input_meters: Vec<f32>,
-    pub playback_meters: Vec<f32>,
+    pub input_meters: Vec<MeterAnim>,
+    pub playback_meters: Vec<MeterAnim>,
     /// Strips the user has collapsed to save horizontal space — presence in
     /// the set means collapsed.
     pub collapsed: HashSet<ChannelId>,
 }
 
-/// Fast rise per 50ms tick (~25ms time constant) — a meter should jump to a
-/// new peak almost instantly so transients don't feel muted.
+/// Matches the `Tick` subscription interval below — the release curve is
+/// timed in real milliseconds rather than "per tick" so it stays correct if
+/// that interval ever changes.
+const METER_TICK_MS: f32 = 50.0;
+/// Fast rise — a meter should jump to a new peak almost instantly so
+/// transients don't feel muted.
 const METER_ATTACK: f32 = 0.7;
-/// Slow fall per 50ms tick (~300ms time constant) — real meter ballistics
-/// decay smoothly instead of snapping down, which is most of what reads as
-/// "fluid" versus "instant/robotic".
-const METER_RELEASE: f32 = 0.1;
+/// Release rate right after a peak: falls quickly at first...
+const METER_RELEASE_START: f32 = 0.22;
+/// ...decelerating to a gentle final approach as it settles, instead of
+/// falling at one constant rate the whole way down. This ease-out shape
+/// (fast-then-gentle) is the same curve easyeffects animates its meters
+/// with (a 300ms cubic ease-out) — it's what reads as a real analog needle
+/// settling rather than a value sliding down at a fixed speed.
+const METER_RELEASE_END: f32 = 0.04;
+/// Time to go from `METER_RELEASE_START` to `METER_RELEASE_END` after a peak.
+const METER_RELEASE_MS: f32 = 300.0;
 
-fn smooth_meter(current: f32, target: f32) -> f32 {
-    let alpha = if target >= current {
-        METER_ATTACK
-    } else {
-        METER_RELEASE
-    };
-    current + (target - current) * alpha
+/// Per-channel VU ballistics state.
+#[derive(Clone, Copy, Debug)]
+pub struct MeterAnim {
+    value: f32,
+    /// Time since the level last rose (i.e. since the last peak) — drives
+    /// the release ease-out curve. Clamped at `METER_RELEASE_MS`, meaning
+    /// "fully settled into the tail rate".
+    release_elapsed_ms: f32,
+}
+
+impl MeterAnim {
+    fn new() -> Self {
+        Self {
+            value: 0.0,
+            release_elapsed_ms: METER_RELEASE_MS,
+        }
+    }
+
+    pub fn value(&self) -> f32 {
+        self.value
+    }
+
+    fn step(&mut self, target: f32) {
+        if target >= self.value {
+            self.value += (target - self.value) * METER_ATTACK;
+            self.release_elapsed_ms = 0.0;
+        } else {
+            self.release_elapsed_ms = (self.release_elapsed_ms + METER_TICK_MS).min(METER_RELEASE_MS);
+            let t = self.release_elapsed_ms / METER_RELEASE_MS;
+            let alpha = METER_RELEASE_END + (METER_RELEASE_START - METER_RELEASE_END) * (1.0 - t) * (1.0 - t);
+            self.value += (target - self.value) * alpha;
+        }
+    }
 }
 
 pub fn new(mock: bool) -> TuxMix {
@@ -256,8 +292,8 @@ pub fn new(mock: bool) -> TuxMix {
         scene_name: String::new(),
         scene_list: list_scene_files(),
         modifiers: keyboard::Modifiers::default(),
-        input_meters: vec![0.0; n_inputs],
-        playback_meters: vec![0.0; n_playbacks],
+        input_meters: vec![MeterAnim::new(); n_inputs],
+        playback_meters: vec![MeterAnim::new(); n_playbacks],
         collapsed: HashSet::new(),
     }
 }
@@ -272,10 +308,10 @@ pub fn update(state: &mut TuxMix, message: Message) -> Task<Message> {
         Message::Tick => {
             let _ = state.device.poll_events();
             for (i, m) in state.input_meters.iter_mut().enumerate() {
-                *m = smooth_meter(*m, state.device.input_meter(i));
+                m.step(state.device.input_meter(i));
             }
             for (i, m) in state.playback_meters.iter_mut().enumerate() {
-                *m = smooth_meter(*m, state.device.playback_meter(i));
+                m.step(state.device.playback_meter(i));
             }
         }
         Message::TabPressed => {
@@ -526,7 +562,7 @@ fn mixer_view(state: &TuxMix) -> Element<'_, Message> {
         prev_type = Some(ch.channel_type);
 
         let cid = ChannelId::Input(i);
-        let meter = state.input_meters.get(i).copied().unwrap_or(0.0);
+        let meter = state.input_meters.get(i).map(MeterAnim::value).unwrap_or(0.0);
         let has_48v = ch.channel_type == ChannelType::Mic;
         let phantom = *state.phantom_overrides.get(&i).unwrap_or(&ch.phantom);
         let pad = *state.pad_overrides.get(&i).unwrap_or(&ch.pad);
@@ -560,7 +596,7 @@ fn mixer_view(state: &TuxMix) -> Element<'_, Message> {
     let mut pb_strips = row![].spacing(6);
     for (i, ch) in state.device.playbacks().iter().enumerate() {
         let cid = ChannelId::Playback(i);
-        let meter = state.playback_meters.get(i).copied().unwrap_or(0.0);
+        let meter = state.playback_meters.get(i).map(MeterAnim::value).unwrap_or(0.0);
         let drag_range = state
             .drag_range
             .and_then(|(dc, lo, hi)| (dc == cid).then_some((lo, hi)));
@@ -670,4 +706,48 @@ fn matrix_view(state: &TuxMix) -> Element<'_, Message> {
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MeterAnim;
+
+    #[test]
+    fn attack_rises_fast() {
+        let mut m = MeterAnim::new();
+        m.step(1.0);
+        assert!(m.value() > 0.5, "one attack tick should jump most of the way: {}", m.value());
+    }
+
+    #[test]
+    fn release_decelerates_over_time() {
+        let mut m = MeterAnim::new();
+        m.step(1.0); // reach a peak first
+        let peak = m.value();
+
+        m.step(0.0);
+        let drop_1 = peak - m.value();
+
+        for _ in 0..10 {
+            m.step(0.0);
+        }
+        let before_late = m.value();
+        m.step(0.0);
+        let drop_late = before_late - m.value();
+
+        assert!(
+            drop_1 > drop_late,
+            "first release tick should fall faster than a tick late into the release: {drop_1} vs {drop_late}"
+        );
+    }
+
+    #[test]
+    fn rising_mid_release_cancels_it_and_resets_the_curve() {
+        let mut m = MeterAnim::new();
+        m.step(1.0);
+        m.step(0.0);
+        m.step(0.0);
+        m.step(1.0); // new peak — release curve should restart from here
+        assert_eq!(m.release_elapsed_ms, 0.0);
+    }
 }
