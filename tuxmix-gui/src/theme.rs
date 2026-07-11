@@ -119,6 +119,28 @@ pub fn panel(_theme: &iced::Theme) -> container::Style {
     }
 }
 
+/// A strip's card — same as `panel`, but with an accent-colored border
+/// when part of the active multi-selection (Ctrl/Shift+click), so grouped
+/// mute/solo/collapse actions have a clear "this is what I'm about to
+/// affect" indicator.
+pub fn strip_panel(selected: bool) -> impl Fn(&iced::Theme) -> container::Style {
+    move |theme| {
+        let base = panel(theme);
+        if selected {
+            container::Style {
+                border: Border {
+                    color: ACCENT,
+                    width: 2.0,
+                    ..base.border
+                },
+                ..base
+            }
+        } else {
+            base
+        }
+    }
+}
+
 pub fn root(_theme: &iced::Theme) -> container::Style {
     container::Style {
         background: Some(Background::Color(BG_DEEP)),

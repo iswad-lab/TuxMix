@@ -1,6 +1,6 @@
 use iced::keyboard::{self, Key};
-use iced::widget::{column, container, pick_list, row, scrollable, text};
-use iced::{window, Element, Length, Subscription, Task};
+use iced::widget::{column, container, mouse_area, pick_list, row, scrollable, text};
+use iced::{mouse, window, Element, Length, Subscription, Task};
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
@@ -175,6 +175,10 @@ pub enum Message {
     ScaleUp,
     ScaleDown,
     ScaleReset,
+    /// Ctrl+scroll over empty background (no strip, fader, or scrollable
+    /// underneath — those already use their own scroll for something
+    /// else) zooms the whole interface, same as Ctrl+=/Ctrl+-.
+    BackgroundScroll(mouse::ScrollDelta),
 
     Mute(ChannelId, bool),
     Solo(ChannelId, bool),
@@ -192,6 +196,15 @@ pub enum Message {
     EditStart(ChannelId, String),
     EditChanged(String),
     EditCommit,
+
+    /// Ctrl/Shift+click on a strip's non-control area toggles its
+    /// selection membership; a plain click there is a no-op (so
+    /// double-click-to-collapse on a selected strip isn't disrupted by an
+    /// intervening deselect on the first press).
+    StripClicked(ChannelId),
+    /// Plain click on genuinely empty page background clears the
+    /// selection — see `page()`.
+    ClearSelection,
 }
 
 // ── App state ────────────────────────────────────────────────────
@@ -222,6 +235,10 @@ pub struct TuxMix {
     /// and widget dimension in the mixer/matrix views. `theme::SCALE_*`
     /// constants define the default/step/bounds.
     pub ui_scale: f32,
+    /// Multi-selected strips (Ctrl/Shift+click to toggle membership,
+    /// click empty background to clear) — mute/solo/collapse applied to
+    /// any selected strip apply to the whole selection at once.
+    pub selected: HashSet<ChannelId>,
 }
 
 /// Matches the `Tick` subscription interval below — the release curve is
@@ -319,12 +336,77 @@ pub fn new(mock: bool) -> TuxMix {
         playback_meters: vec![MeterAnim::new(); n_playbacks],
         collapsed: HashSet::new(),
         ui_scale: theme::SCALE_DEFAULT,
+        selected: HashSet::new(),
     }
 }
 
 pub fn title(state: &TuxMix) -> String {
     let _ = state;
     "TuxMix - RME Mixer".into()
+}
+
+/// Floor used when converting silence (linear 0.0) to dB for group-delta
+/// math — an actual `f32::NEG_INFINITY` would turn one dragged-to-zero
+/// channel into an infinite delta that snaps every other selected channel
+/// to 0.0 or 1.0 depending on direction. A large-but-finite floor keeps
+/// the swing dramatic (as it should be) without the infinity/NaN edge
+/// case.
+const GROUP_SILENCE_DB: f32 = -100.0;
+
+fn vol_to_db(v: f32) -> f32 {
+    if v <= 0.0 {
+        GROUP_SILENCE_DB
+    } else {
+        (20.0 * v.log10()).max(GROUP_SILENCE_DB)
+    }
+}
+
+fn db_to_vol(db: f32) -> f32 {
+    if db <= GROUP_SILENCE_DB {
+        0.0
+    } else {
+        10f32.powf(db / 20.0)
+    }
+}
+
+/// Sets `cid`'s volume to `v`. If `cid` is part of an active multi-selection,
+/// every other selected channel moves by the same *relative* amount instead
+/// of jumping to the same absolute level — preserving the balance between
+/// them, the way dragging one fader in a DAW's multi-track selection moves
+/// the whole group together rather than flattening it to one value.
+///
+/// The delta is computed in dB, not raw linear amplitude — the fader's own
+/// travel is dB-tapered, so an equal *linear* delta applied to channels
+/// sitting at different points on that curve produces wildly different dB
+/// swings (a channel near the bottom barely moves while one near unity
+/// swings hard). dB delta is what actually reads as "moving together."
+fn apply_grouped_volume(state: &mut TuxMix, cid: ChannelId, out: usize, v: f32) {
+    if state.selected.len() > 1 && state.selected.contains(&cid) {
+        let old = state.device.volume(cid, out).unwrap_or(v);
+        let delta_db = vol_to_db(v) - vol_to_db(old);
+        for sel in state.selected.clone() {
+            let cur = state.device.volume(sel, out).unwrap_or(0.0);
+            let new_vol = db_to_vol(vol_to_db(cur) + delta_db).clamp(0.0, 1.0);
+            let _ = state.device.set_volume(sel, out, new_vol);
+        }
+    } else {
+        let _ = state.device.set_volume(cid, out, v);
+    }
+}
+
+/// Same relative-delta grouping as `apply_grouped_volume`, for pan.
+fn apply_grouped_pan(state: &mut TuxMix, cid: ChannelId, out: usize, pan: i8) {
+    if state.selected.len() > 1 && state.selected.contains(&cid) {
+        let old = i16::from(state.device.pan(cid, out).unwrap_or(pan));
+        let delta = i16::from(pan) - old;
+        for sel in state.selected.clone() {
+            let cur = i16::from(state.device.pan(sel, out).unwrap_or(0));
+            let new = (cur + delta).clamp(-100, 100) as i8;
+            let _ = state.device.set_pan(sel, out, new);
+        }
+    } else {
+        let _ = state.device.set_pan(cid, out, pan);
+    }
 }
 
 pub fn update(state: &mut TuxMix, message: Message) -> Task<Message> {
@@ -363,16 +445,42 @@ pub fn update(state: &mut TuxMix, message: Message) -> Task<Message> {
             state.ui_scale = (state.ui_scale - theme::SCALE_STEP).max(theme::SCALE_MIN);
         }
         Message::ScaleReset => state.ui_scale = theme::SCALE_DEFAULT,
+        Message::BackgroundScroll(delta) => {
+            if state.modifiers.control() {
+                // Same 20:1 ratio as the fader's own wheel handling — a
+                // wheel "line" is one discrete detent, a trackpad "pixel"
+                // stream needs a much smaller per-event step or a short
+                // swipe would blow through the whole zoom range.
+                let (dy, step) = match delta {
+                    mouse::ScrollDelta::Lines { y, .. } => (y, theme::SCALE_STEP),
+                    mouse::ScrollDelta::Pixels { y, .. } => (y, theme::SCALE_STEP / 20.0),
+                };
+                state.ui_scale =
+                    (state.ui_scale + dy * step).clamp(theme::SCALE_MIN, theme::SCALE_MAX);
+            }
+        }
         Message::EscapePressed => {
             if state.editing.is_some() {
                 state.editing = None;
             }
         }
         Message::Mute(cid, m) => {
-            let _ = state.device.set_mute(cid, m);
+            if state.selected.len() > 1 && state.selected.contains(&cid) {
+                for sel in state.selected.clone() {
+                    let _ = state.device.set_mute(sel, m);
+                }
+            } else {
+                let _ = state.device.set_mute(cid, m);
+            }
         }
         Message::Solo(cid, s) => {
-            let _ = state.device.set_solo(cid, s);
+            if state.selected.len() > 1 && state.selected.contains(&cid) {
+                for sel in state.selected.clone() {
+                    let _ = state.device.set_solo(sel, s);
+                }
+            } else {
+                let _ = state.device.set_solo(cid, s);
+            }
         }
         Message::Phantom(idx, p) => {
             state.phantom_overrides.insert(idx, p);
@@ -381,13 +489,13 @@ pub fn update(state: &mut TuxMix, message: Message) -> Task<Message> {
             state.pad_overrides.insert(idx, p);
         }
         Message::VolumeChanged(cid, out, v) => {
-            let _ = state.device.set_volume(cid, out, v);
+            apply_grouped_volume(state, cid, out, v);
         }
         Message::FaderPressed(cid, out, v, range) => {
             if let Some((lo, hi)) = range {
                 state.drag_range = Some((cid, lo, hi));
             }
-            let _ = state.device.set_volume(cid, out, v);
+            apply_grouped_volume(state, cid, out, v);
         }
         Message::RangeCleared(cid) => {
             if state.drag_range.is_some_and(|(dc, _, _)| dc == cid) {
@@ -401,12 +509,35 @@ pub fn update(state: &mut TuxMix, message: Message) -> Task<Message> {
             }
         }
         Message::PanChanged(cid, out, pan) => {
-            let _ = state.device.set_pan(cid, out, pan);
+            apply_grouped_pan(state, cid, out, pan);
         }
         Message::ToggleCollapse(cid) => {
-            if !state.collapsed.remove(&cid) {
+            if state.selected.len() > 1 && state.selected.contains(&cid) {
+                // Uniform target for the whole group — the opposite of
+                // what the clicked strip currently is — rather than each
+                // toggling its own state independently, which would leave
+                // them out of sync with each other.
+                let target = !state.collapsed.contains(&cid);
+                for sel in state.selected.clone() {
+                    if target {
+                        state.collapsed.insert(sel);
+                    } else {
+                        state.collapsed.remove(&sel);
+                    }
+                }
+            } else if !state.collapsed.remove(&cid) {
                 state.collapsed.insert(cid);
             }
+        }
+        Message::StripClicked(cid) => {
+            if state.modifiers.control() || state.modifiers.shift() {
+                if !state.selected.remove(&cid) {
+                    state.selected.insert(cid);
+                }
+            }
+        }
+        Message::ClearSelection => {
+            state.selected.clear();
         }
         Message::EditStart(cid, buf) => {
             state.editing = Some(cid);
@@ -474,7 +605,17 @@ pub fn view(state: &TuxMix) -> Element<'_, Message> {
         mixer_view(state)
     };
 
-    column![top, content].into()
+    // Explicit Fill — a Shrink parent doesn't actually grant a Fill-sized
+    // child the real window height for layout/hit-testing, even though
+    // the raw window clear color visually fills the gap identically to
+    // our own background (same near-black), making a real empty area
+    // indistinguishable on screen from a genuinely non-interactive one.
+    // That's what made `page()`'s click-to-clear-selection silently miss
+    // every click below the shortest section's natural content height.
+    column![top, content]
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
 }
 
 /// A section label (HARDWARE INPUTS, SOFTWARE PLAYBACK, ...) with an accent
@@ -489,6 +630,24 @@ fn section_header(label: &str, scale: f32) -> Element<'_, Message> {
     ]
     .spacing(theme::SPACE_LG)
     .align_y(iced::Alignment::Center)
+    .into()
+}
+
+/// Wraps a view's body in the root background, filling the window, with
+/// Ctrl+scroll-to-zoom over whatever empty space is left — a fader, pan
+/// control, or scrollable strip row underneath already captures the wheel
+/// event for its own purpose first, so this only ever fires over genuinely
+/// empty background.
+fn page<'a>(body: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+    mouse_area(
+        container(body)
+            .style(theme::root)
+            .padding([theme::SPACE_LG, theme::SPACE_XL])
+            .width(Length::Fill)
+            .height(Length::Fill),
+    )
+    .on_scroll(Message::BackgroundScroll)
+    .on_press(Message::ClearSelection)
     .into()
 }
 
@@ -676,6 +835,7 @@ fn mixer_view(state: &TuxMix) -> Element<'_, Message> {
             modifiers: state.modifiers,
             collapsed: state.collapsed.contains(&cid),
             scale: state.ui_scale,
+            selected: state.selected.contains(&cid),
         }));
     }
 
@@ -712,6 +872,7 @@ fn mixer_view(state: &TuxMix) -> Element<'_, Message> {
             modifiers: state.modifiers,
             collapsed: state.collapsed.contains(&cid),
             scale: state.ui_scale,
+            selected: state.selected.contains(&cid),
         }));
     }
 
@@ -743,6 +904,7 @@ fn mixer_view(state: &TuxMix) -> Element<'_, Message> {
             modifiers: state.modifiers,
             collapsed: state.collapsed.contains(&cid),
             scale: state.ui_scale,
+            selected: state.selected.contains(&cid),
         }));
     }
 
@@ -775,12 +937,7 @@ fn mixer_view(state: &TuxMix) -> Element<'_, Message> {
     ]
     .spacing(theme::SPACE_LG);
 
-    container(body)
-        .style(theme::root)
-        .padding([theme::SPACE_LG, theme::SPACE_XL])
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+    page(body)
 }
 
 fn matrix_view(state: &TuxMix) -> Element<'_, Message> {
@@ -794,12 +951,7 @@ fn matrix_view(state: &TuxMix) -> Element<'_, Message> {
     ]
     .spacing(theme::SPACE_LG);
 
-    container(body)
-        .style(theme::root)
-        .padding([theme::SPACE_LG, theme::SPACE_XL])
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+    page(body)
 }
 
 #[cfg(test)]

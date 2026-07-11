@@ -43,6 +43,7 @@ pub struct StripParams<'a> {
     pub modifiers: Modifiers,
     pub collapsed: bool,
     pub scale: f32,
+    pub selected: bool,
 }
 
 /// A button's own padding-based centering isn't reliable across glyphs of
@@ -108,11 +109,15 @@ fn collapsed_strip<'a>(p: StripParams<'a>) -> Element<'a, Message> {
     .width(Length::Fill)
     .align_x(iced::Alignment::Center);
 
-    container(rows)
-        .style(theme::panel)
-        .padding([theme::SPACE_SM * p.scale, theme::SPACE_MD * p.scale])
-        .width(Length::Fixed(COLLAPSED_W * p.scale))
-        .into()
+    mouse_area(
+        container(rows)
+            .style(theme::strip_panel(p.selected))
+            .padding([theme::SPACE_SM * p.scale, theme::SPACE_MD * p.scale])
+            .width(Length::Fixed(COLLAPSED_W * p.scale)),
+    )
+    .on_press(Message::StripClicked(p.cid))
+    .on_double_click(Message::ToggleCollapse(p.cid))
+    .into()
 }
 
 pub fn strip<'a>(p: StripParams<'a>) -> Element<'a, Message> {
@@ -235,12 +240,24 @@ pub fn strip<'a>(p: StripParams<'a>) -> Element<'a, Message> {
         );
     }
 
-    container(
-        rows.width(Length::Fill)
-            .align_x(iced::Alignment::Center),
+    // Double-click anywhere on the card that isn't already claimed by a
+    // specific control (the fader/pan canvases capture their own
+    // double-click for reset-to-default, the dB readout for its edit
+    // field, buttons for their own press) collapses the strip — a bigger,
+    // more discoverable target than the tiny "-" button alone. A plain
+    // click there is a no-op; Ctrl/Shift+click toggles multi-selection
+    // (see `Message::StripClicked`) — mute/solo/collapse on any selected
+    // strip then apply to the whole selection at once.
+    mouse_area(
+        container(
+            rows.width(Length::Fill)
+                .align_x(iced::Alignment::Center),
+        )
+        .style(theme::strip_panel(p.selected))
+        .padding([theme::SPACE_SM * scale, theme::SPACE_MD * scale])
+        .width(Length::Fixed(STRIP_W * scale)),
     )
-    .style(theme::panel)
-    .padding([theme::SPACE_SM * scale, theme::SPACE_MD * scale])
-    .width(Length::Fixed(STRIP_W * scale))
+    .on_press(Message::StripClicked(cid))
+    .on_double_click(Message::ToggleCollapse(cid))
     .into()
 }
