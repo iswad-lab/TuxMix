@@ -17,7 +17,14 @@ const METER_RULER_W: f32 = 27.0;
 const GAP: f32 = 5.0;
 const TRACK_W: f32 = 24.0;
 const DOUBLE_CLICK: Duration = Duration::from_millis(400);
-const FINE_SPAN: f32 = 0.08;
+/// Shift-drag sensitivity reduction: cursor travel over the whole track
+/// only moves the value by this fraction of what a normal drag would.
+/// Earlier this remapped `range` to a narrow absolute value window instead
+/// (cap tracking the cursor 1:1 inside a "zoomed" scale) — that made the
+/// cap's screen position discontinuous the instant the drag ended and the
+/// range snapped back to full, and moved the unity reference dot along
+/// with it. A plain relative-delta scale-down has no such range to snap.
+const FINE_SENSITIVITY: f32 = 0.15;
 
 /// Fader travel is dB-tapered (like real hardware / TotalMix), not linear
 /// amplitude — a power curve (t = 1 - x^K, x = db/FLOOR_DB) gives generous
@@ -83,6 +90,11 @@ impl<Message> Fader<Message> {
 pub struct State {
     dragging: bool,
     last_click: Option<Instant>,
+    /// (cursor Y, t) captured when a shift-drag starts. Subsequent moves
+    /// apply a scaled-down relative delta from this anchor rather than an
+    /// absolute cursor-to-value mapping, so the cap deliberately lags the
+    /// cursor instead of tracking it 1:1 — see `FINE_SENSITIVITY`.
+    fine_anchor: Option<(f32, f32)>,
 }
 
 impl<Message> canvas::Program<Message> for Fader<Message> {
@@ -113,32 +125,31 @@ impl<Message> canvas::Program<Message> for Fader<Message> {
                 if is_double {
                     state.dragging = false;
                     state.last_click = None;
+                    state.fine_anchor = None;
                     return Some(canvas::Action::publish((self.on_reset)()).and_capture());
                 }
                 state.last_click = Some(now);
                 state.dragging = true;
 
                 let value = locate(pos.y);
-                let fine_range = if self.modifiers.shift() {
-                    let span = FINE_SPAN;
-                    let mut lo = (value - span / 2.0).max(0.0);
-                    let mut hi = lo + span;
-                    if hi > 1.0 {
-                        hi = 1.0;
-                        lo = hi - span;
-                    }
-                    Some((lo.max(0.0), hi))
-                } else {
-                    None
-                };
-                Some(canvas::Action::publish((self.on_press)(value, fine_range)).and_capture())
+                state.fine_anchor = self
+                    .modifiers
+                    .shift()
+                    .then_some((pos.y, vol_to_t(value)));
+                Some(canvas::Action::publish((self.on_press)(value, None)).and_capture())
             }
             canvas::Event::Mouse(mouse::Event::CursorMoved { .. }) => {
                 if !state.dragging {
                     return None;
                 }
                 let pos = cursor.land().position()?;
-                let value = locate(pos.y);
+                let value = if let Some((anchor_y, anchor_t)) = state.fine_anchor {
+                    let screen_dt = -(pos.y - anchor_y) / bounds.height;
+                    let t = (anchor_t + screen_dt * FINE_SENSITIVITY).clamp(0.0, 1.0);
+                    t_to_vol(t)
+                } else {
+                    locate(pos.y)
+                };
                 Some(canvas::Action::publish((self.on_drag)(value)).and_capture())
             }
             canvas::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
@@ -146,27 +157,39 @@ impl<Message> canvas::Program<Message> for Fader<Message> {
                     return None;
                 }
                 state.dragging = false;
+                state.fine_anchor = None;
                 Some(canvas::Action::publish((self.on_release)()).and_capture())
             }
             canvas::Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
                 if !cursor.is_over(bounds) {
                     return None;
                 }
-                let dy = match delta {
-                    mouse::ScrollDelta::Lines { y, .. } => *y,
-                    mouse::ScrollDelta::Pixels { y, .. } => *y,
+                // Lines are discrete wheel detents (dy is usually ±1 per
+                // click); Pixels are a continuous trackpad/high-res stream
+                // (many small events per gesture) — they need very
+                // different per-event magnitudes or one feels dead and the
+                // other feels like it teleports. Stepping in tapered
+                // t-space (not raw linear volume) also keeps the nudge feel
+                // consistent across the whole dB range instead of vanishing
+                // near unity, where a fixed amplitude step is only a
+                // fraction of a dB.
+                let (dy, base_step) = match delta {
+                    mouse::ScrollDelta::Lines { y, .. } => (*y, 0.03),
+                    mouse::ScrollDelta::Pixels { y, .. } => (*y, 0.0015),
                 };
                 if dy == 0.0 {
                     return None;
                 }
-                let step = if self.modifiers.shift() {
-                    0.0002
+                let mult = if self.modifiers.shift() {
+                    0.25
                 } else if self.modifiers.control() {
-                    0.004
+                    3.0
                 } else {
-                    0.001
+                    1.0
                 };
-                let value = (self.value + dy * step).clamp(0.0, 1.0);
+                let t = vol_to_t(self.value);
+                let new_t = (t + dy * base_step * mult).clamp(0.0, 1.0);
+                let value = t_to_vol(new_t);
                 Some(canvas::Action::publish((self.on_drag)(value)).and_capture())
             }
             _ => None,
