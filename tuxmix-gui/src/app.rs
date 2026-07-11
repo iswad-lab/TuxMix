@@ -455,6 +455,19 @@ fn chip<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
         .into()
 }
 
+/// A thin vertical separator between sub-groups inside a merged chip —
+/// lighter-weight than another chip boundary, just enough to break up
+/// dense runs of controls (Scene tools / Submix / Clock) without adding a
+/// third level of boxing.
+fn v_divider<'a>() -> Element<'a, Message> {
+    container(iced::widget::Space::new().width(1).height(16))
+        .style(|_theme: &iced::Theme| container::Style {
+            background: Some(iced::Background::Color(theme::BORDER)),
+            ..container::Style::default()
+        })
+        .into()
+}
+
 fn top_bar(state: &TuxMix) -> Element<'_, Message> {
     let status_color = if state.device.is_mock() {
         theme::YSIM
@@ -467,6 +480,9 @@ fn top_bar(state: &TuxMix) -> Element<'_, Message> {
         "Connected"
     };
 
+    // Primary identity: brand + connected device. The one element in the
+    // bar that's meant to be visually loud — everything else is a tool,
+    // this is "what am I even looking at".
     let device_chip = chip(
         row![
             text("●").color(status_color).size(theme::TEXT_SM),
@@ -479,16 +495,31 @@ fn top_bar(state: &TuxMix) -> Element<'_, Message> {
         .align_y(iced::Alignment::Center),
     );
 
-    let tab_chip = chip(
-        text(if state.show_matrix { "MATRIX" } else { "MIXER" })
-            .color(theme::ACCENT)
-            .size(theme::TEXT_MD),
-    );
+    // View switch: a plain segmented toggle, not a chip — it's navigation,
+    // not a status readout, so it shouldn't carry the same visual weight
+    // as the identity chip. Both labels are always visible and clickable
+    // (previously only the active view's name showed, with no click
+    // target — Tab-key was the only way to switch).
+    let tab_toggle = row![
+        iced::widget::button(text("MIXER").size(theme::TEXT_MD))
+            .padding([4, 10])
+            .style(theme::tab_toggle(!state.show_matrix))
+            .on_press(Message::TabPressed),
+        iced::widget::button(text("MATRIX").size(theme::TEXT_MD))
+            .padding([4, 10])
+            .style(theme::tab_toggle(state.show_matrix))
+            .on_press(Message::TabPressed),
+    ]
+    .spacing(2);
 
+    // Secondary session tools: scene / submix / clock. These used to be
+    // three separate chips carrying the same visual weight as the device
+    // identity chip — merged into one quieter toolbar so the bar reads as
+    // "one important thing, one toolbar" instead of five equal boxes.
     let scene_list = state.scene_list.clone();
-    let scene_group = chip(
+    let session = chip(
         row![
-            text("Scene").color(theme::TEXT_SEC).size(theme::TEXT_MD),
+            text("Scene").color(theme::TEXT_SEC).size(theme::TEXT_XS),
             iced::widget::text_input("name", &state.scene_name)
                 .on_input(Message::SceneNameChanged)
                 .on_submit(Message::SceneSave)
@@ -503,14 +534,8 @@ fn top_bar(state: &TuxMix) -> Element<'_, Message> {
                 .style(theme::pick_list)
                 .menu_style(theme::menu)
                 .text_size(theme::TEXT_MD),
-        ]
-        .spacing(8)
-        .align_y(iced::Alignment::Center),
-    );
-
-    let submix_group = chip(
-        row![
-            text("Submix").color(theme::TEXT_SEC).size(theme::TEXT_MD),
+            v_divider(),
+            text("Submix").color(theme::TEXT_SEC).size(theme::TEXT_XS),
             pick_list(
                 OUT_LABELS.to_vec(),
                 Some(OUT_LABELS[state.sel_out]),
@@ -522,27 +547,23 @@ fn top_bar(state: &TuxMix) -> Element<'_, Message> {
             .style(theme::pick_list)
             .menu_style(theme::menu)
             .text_size(theme::TEXT_MD),
+            v_divider(),
+            text(state.device.settings().clock_source.clone())
+                .color(theme::TEXT_SEC)
+                .size(theme::TEXT_XS),
         ]
         .spacing(8)
         .align_y(iced::Alignment::Center),
     );
 
-    let clock_chip = chip(
-        text(state.device.settings().clock_source.clone())
-            .color(theme::TEXT_SEC)
-            .size(theme::TEXT_MD),
-    );
-
     let bar = row![
         text("TuxMix").color(theme::ACCENT).size(theme::TEXT_XL),
         device_chip,
-        tab_chip,
+        tab_toggle,
         iced::widget::Space::new().width(Length::Fill),
-        scene_group,
-        submix_group,
-        clock_chip,
+        session,
     ]
-    .spacing(10)
+    .spacing(14)
     .align_y(iced::Alignment::Center);
 
     container(bar)

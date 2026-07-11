@@ -131,6 +131,34 @@ pub fn toggle_button(
     }
 }
 
+/// The MIXER/MATRIX view switch in the top bar — a plain-text segmented
+/// pair rather than another boxed `chip`, so it doesn't compete for
+/// attention with the device-identity chip next to it. Active tab gets a
+/// filled pill (same `ACCENT_DIM` used elsewhere for "selected"); inactive
+/// stays flat until hovered.
+pub fn tab_toggle(active: bool) -> impl Fn(&iced::Theme, button::Status) -> button::Style {
+    move |_theme, status| {
+        let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+        let background = if active {
+            ACCENT_DIM
+        } else if hovered {
+            SURFACE
+        } else {
+            Color::TRANSPARENT
+        };
+        button::Style {
+            background: Some(Background::Color(background)),
+            text_color: if active { TEXT_PRIMARY } else { TEXT_SEC },
+            border: Border {
+                radius: 4.0.into(),
+                ..Border::default()
+            },
+            shadow: Shadow::default(),
+            snap: false,
+        }
+    }
+}
+
 pub fn plain_button(_theme: &iced::Theme, status: button::Status) -> button::Style {
     let bg = match status {
         button::Status::Hovered => ACCENT_DIM,
