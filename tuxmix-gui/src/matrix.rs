@@ -7,7 +7,7 @@ use tuxmix_core::{ChannelId, RmeDevice};
 
 use crate::app::{Message, TuxMix, OUT_LABELS};
 use crate::theme;
-use crate::widgets::fader::{fader, Fader};
+use crate::widgets::fader::{fader, Fader, MeterFrame};
 
 /// Base cell height at `scale == 1.0` — see `theme::SCALE_DEFAULT`.
 const CELL_H: f32 = 36.0;
@@ -17,14 +17,14 @@ pub fn view(state: &TuxMix) -> Element<'_, Message> {
     let ni = state.device.inputs().len();
     let np = state.device.playbacks().len();
 
-    let mut row_labels = column![text("").size(theme::TEXT_XS * scale)].spacing(2);
+    let mut row_labels = column![text("").size(theme::TEXT_XS * scale)].spacing(theme::SPACE_TIGHT);
     for (out, label) in OUT_LABELS.iter().enumerate() {
         let active = out == state.sel_out;
         let color = if active { theme::ACCENT } else { theme::TEXT_SEC };
         row_labels = row_labels.push(text(*label).color(color).size(theme::TEXT_XS * scale));
     }
 
-    let mut cols = row![row_labels].spacing(2);
+    let mut cols = row![row_labels].spacing(theme::SPACE_TIGHT);
 
     for col in 0..(ni + np) {
         let (name, cid) = if col < ni {
@@ -40,7 +40,7 @@ pub fn view(state: &TuxMix) -> Element<'_, Message> {
         };
 
         let mut col_widget =
-            column![text(name).color(theme::TEXT_SEC).size(theme::TEXT_XS * scale)].spacing(2);
+            column![text(name).color(theme::TEXT_SEC).size(theme::TEXT_XS * scale)].spacing(theme::SPACE_TIGHT);
         for out in 0..OUT_LABELS.len() {
             let vol = if col < ni {
                 state.device.inputs()[col].volumes[out]
@@ -51,7 +51,7 @@ pub fn view(state: &TuxMix) -> Element<'_, Message> {
                 value: vol,
                 range: (0.0, 1.0),
                 default_value: 0.75,
-                meter: 0.0,
+                meter: MeterFrame::still(0.0),
                 height: CELL_H * scale,
                 show_meter: false,
                 modifiers: state.modifiers,
@@ -71,5 +71,8 @@ pub fn view(state: &TuxMix) -> Element<'_, Message> {
         ))
         .style(theme::scrollable);
 
-    container(scroller).style(theme::panel).padding(8).into()
+    container(scroller)
+        .style(theme::panel)
+        .padding(theme::SPACE_LG)
+        .into()
 }

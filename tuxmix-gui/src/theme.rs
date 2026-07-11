@@ -61,13 +61,57 @@ pub const SCALE_STEP: f32 = 0.1;
 pub const SCALE_MIN: f32 = 0.75;
 pub const SCALE_MAX: f32 = 1.75;
 
+// ── Corner radius scale ─────────────────────────────────────────────
+// Same idea as the type scale: before this, `panel` used 7 and `chip`
+// used 6 with no reason they were ever different — just whatever felt
+// fine in isolation when each was written.
+
+/// The section-header accent tick — barely-there rounding on a thin bar.
+pub const RADIUS_XS: f32 = 2.0;
+/// Every interactive control: buttons, text inputs, pick lists/menus, the
+/// scrollbar scroller.
+pub const RADIUS_SM: f32 = 4.0;
+/// Container chrome: strip cards (`panel`) and top-bar groups (`chip`) —
+/// previously 7 and 6 respectively, for no reason they needed to differ.
+pub const RADIUS_MD: f32 = 8.0;
+
+// ── Spacing scale ────────────────────────────────────────────────────
+// Same consolidation for `.spacing()`/`.padding()` call sites — before
+// this there were eleven near-arbitrary values (1, 2, 3, 4, 5, 6, 8, 10,
+// 12, 14, 16) scattered across app.rs/strip.rs/matrix.rs with no shared
+// vocabulary. Values are the *smallest* unit of a given role, not a
+// strict multiplier progression — the goal is a short, named list callers
+// can pick from, not a formula.
+
+/// Between rows stacked tightly inside one strip's control stack (header
+/// → M/S → 48V/PAD → fader → dB → pan) and between a pan dot and its
+/// label — these read as one continuous unit, not separate rows.
+pub const SPACE_HAIRLINE: f32 = 1.0;
+/// Between closely related inline siblings: a channel name and its type
+/// tag, the M/S button pair, a matrix cell grid, the MIXER/MATRIX toggle.
+pub const SPACE_TIGHT: f32 = 2.0;
+/// Small control padding — e.g. the top-bar view-toggle buttons.
+pub const SPACE_SM: f32 = 4.0;
+/// Strip card padding, strip-to-strip gaps, a chip's internal row
+/// spacing.
+pub const SPACE_MD: f32 = 6.0;
+/// Section-level spacing: the gap between HARDWARE INPUTS / SOFTWARE
+/// PLAYBACK / HARDWARE OUTPUTS blocks, a section header's own row.
+pub const SPACE_LG: f32 = 8.0;
+/// Container-level padding: a chip's horizontal padding, the mixer/matrix
+/// view's outer padding.
+pub const SPACE_XL: f32 = 12.0;
+/// The top bar's outer padding and the gap between its identity/nav/
+/// session groups.
+pub const SPACE_XXL: f32 = 16.0;
+
 pub fn panel(_theme: &iced::Theme) -> container::Style {
     container::Style {
         background: Some(Background::Color(SURFACE)),
         border: Border {
             color: BORDER,
             width: 1.0,
-            radius: 7.0.into(),
+            radius: RADIUS_MD.into(),
         },
         text_color: Some(TEXT_PRIMARY),
         shadow: Shadow::default(),
@@ -137,7 +181,7 @@ pub fn toggle_button(
             border: Border {
                 color: border_color,
                 width: 1.0,
-                radius: 4.0.into(),
+                radius: RADIUS_SM.into(),
             },
             shadow,
             snap: false,
@@ -164,7 +208,7 @@ pub fn tab_toggle(active: bool) -> impl Fn(&iced::Theme, button::Status) -> butt
             background: Some(Background::Color(background)),
             text_color: if active { TEXT_PRIMARY } else { TEXT_SEC },
             border: Border {
-                radius: 4.0.into(),
+                radius: RADIUS_SM.into(),
                 ..Border::default()
             },
             shadow: Shadow::default(),
@@ -184,7 +228,7 @@ pub fn plain_button(_theme: &iced::Theme, status: button::Status) -> button::Sty
         border: Border {
             color: BORDER,
             width: 1.0,
-            radius: 4.0.into(),
+            radius: RADIUS_SM.into(),
         },
         shadow: Shadow::default(),
         snap: false,
@@ -196,7 +240,7 @@ pub fn accent_bar(_theme: &iced::Theme) -> container::Style {
     container::Style {
         background: Some(Background::Color(ACCENT)),
         border: Border {
-            radius: 1.0.into(),
+            radius: RADIUS_XS.into(),
             ..Border::default()
         },
         ..container::Style::default()
@@ -212,7 +256,7 @@ pub fn chip(_theme: &iced::Theme) -> container::Style {
         border: Border {
             color: BORDER,
             width: 1.0,
-            radius: 6.0.into(),
+            radius: RADIUS_MD.into(),
         },
         text_color: Some(TEXT_PRIMARY),
         shadow: Shadow::default(),
@@ -234,7 +278,7 @@ pub fn text_input(
         border: Border {
             color: border_color,
             width: 1.0,
-            radius: 4.0.into(),
+            radius: RADIUS_SM.into(),
         },
         icon: TEXT_SEC,
         placeholder: TEXT_SEC,
@@ -260,7 +304,7 @@ pub fn pick_list(
         border: Border {
             color: border_color,
             width: 1.0,
-            radius: 4.0.into(),
+            radius: RADIUS_SM.into(),
         },
     }
 }
@@ -308,7 +352,7 @@ pub fn scrollable(
         scroller: Scroller {
             background: Background::Color(if active { FADER } else { BORDER }),
             border: Border {
-                radius: 3.0.into(),
+                radius: RADIUS_SM.into(),
                 ..Border::default()
             },
         },
@@ -334,7 +378,7 @@ pub fn menu(_theme: &iced::Theme) -> menu::Style {
         border: Border {
             color: BORDER,
             width: 1.0,
-            radius: 4.0.into(),
+            radius: RADIUS_SM.into(),
         },
         text_color: TEXT_PRIMARY,
         selected_text_color: TEXT_PRIMARY,

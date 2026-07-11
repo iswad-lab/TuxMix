@@ -4,10 +4,54 @@
 
 use iced::keyboard::Modifiers;
 use iced::widget::canvas::{self, Canvas, Frame, Geometry, Path, Stroke};
-use iced::{mouse, Color, Element, Length, Point, Rectangle, Renderer, Size, Theme};
+use iced::{mouse, window, Color, Element, Length, Point, Rectangle, Renderer, Size, Theme};
 use std::time::{Duration, Instant};
 
 use crate::theme;
+
+/// How long a meter keyframe transition takes to visually settle — matches
+/// `app.rs`'s `Tick` interval, since that's how often a new keyframe
+/// (`MeterFrame`) arrives.
+const METER_INTERP_MS: f32 = 50.0;
+
+/// A meter's ease-out keyframe pair — the ballistics in `app.rs` only
+/// compute a new value once per `Tick` (50ms), which reads as a stair-step
+/// rather than motion if drawn as-is. `Fader`/`VuMeter` interpolate between
+/// `prev` and `value` using their own draw-time `Instant::now()` instead of
+/// the single stale snapshot `view()` was built with, and self-drive extra
+/// redraws while still catching up (`canvas::Action::request_redraw()`),
+/// settling back to the normal `Tick`-driven redraw rate once caught up —
+/// full-refresh-rate motion without polling the device or rebuilding the
+/// view any more often than before.
+#[derive(Clone, Copy, Debug)]
+pub struct MeterFrame {
+    pub prev: f32,
+    pub value: f32,
+    pub since: Instant,
+}
+
+impl MeterFrame {
+    /// A meter with no in-flight transition — e.g. outputs, which don't
+    /// have live meter data wired up.
+    pub fn still(value: f32) -> Self {
+        Self {
+            prev: value,
+            value,
+            since: Instant::now(),
+        }
+    }
+
+    fn at(&self, now: Instant) -> f32 {
+        let t = (now.duration_since(self.since).as_secs_f32() * 1000.0 / METER_INTERP_MS)
+            .clamp(0.0, 1.0);
+        self.prev + (self.value - self.prev) * t
+    }
+
+    fn is_settling(&self, now: Instant) -> bool {
+        (self.value - self.prev).abs() > f32::EPSILON
+            && now.duration_since(self.since).as_secs_f32() * 1000.0 < METER_INTERP_MS
+    }
+}
 
 /// The meter and the dB ruler share one column — the meter is a
 /// translucent color wash filling the whole column, and the ruler ticks
@@ -35,6 +79,14 @@ const SCROLL_IDLE: Duration = Duration::from_millis(200);
 /// range snapped back to full, and moved the unity reference dot along
 /// with it. A plain relative-delta scale-down has no such range to snap.
 const FINE_SENSITIVITY: f32 = 0.15;
+/// Magnetic snap zone around the unity/default reference mark, in pixels
+/// at `scale == 1.0` — landing within this many pixels of it while
+/// dragging snaps the cap exactly onto it, like a detent on a real
+/// console fader. Small movements inside the zone re-snap back to
+/// center (since the accumulator is re-seeded at the snapped value each
+/// time), so leaving it takes a deliberate move past the edge rather
+/// than the value drifting off by a pixel.
+const SNAP_PX: f32 = 5.0;
 
 /// Fader travel is dB-tapered (like real hardware / TotalMix), not linear
 /// amplitude — a power curve (t = 1 - x^K, x = db/FLOOR_DB) gives generous
@@ -76,7 +128,7 @@ pub struct Fader<Message> {
     pub value: f32,
     pub range: (f32, f32),
     pub default_value: f32,
-    pub meter: f32,
+    pub meter: MeterFrame,
     pub height: f32,
     pub show_meter: bool,
     pub modifiers: Modifiers,
@@ -182,7 +234,12 @@ impl<Message> canvas::Program<Message> for Fader<Message> {
                     1.0
                 };
                 let base_t = state.drag_t.unwrap_or_else(|| vol_to_t(self.value));
-                let t = (base_t + screen_dt * mult).clamp(0.0, 1.0);
+                let mut t = (base_t + screen_dt * mult).clamp(0.0, 1.0);
+                let snap_t = (SNAP_PX * self.scale) / bounds.height.max(1.0);
+                let default_t = vol_to_t(self.default_value);
+                if (t - default_t).abs() < snap_t {
+                    t = default_t;
+                }
                 state.drag_pos = Some(pos.y);
                 state.drag_t = Some(t);
                 Some(canvas::Action::publish((self.on_drag)(t_to_vol(t))).and_capture())
@@ -238,6 +295,17 @@ impl<Message> canvas::Program<Message> for Fader<Message> {
                 let value = t_to_vol(new_t);
                 Some(canvas::Action::publish((self.on_drag)(value)).and_capture())
             }
+            // Keeps redrawing at full display refresh rate while the meter
+            // is still interpolating between its last two polled keyframes
+            // — settles back to the normal Tick-driven rate on its own
+            // once caught up (see `MeterFrame`).
+            canvas::Event::Window(window::Event::RedrawRequested(now)) => {
+                if self.show_meter && self.meter.is_settling(*now) {
+                    Some(canvas::Action::request_redraw())
+                } else {
+                    None
+                }
+            }
             _ => None,
         }
     }
@@ -258,7 +326,7 @@ impl<Message> canvas::Program<Message> for Fader<Message> {
             );
             // Meter first, as a translucent wash; ruler ticks drawn on top
             // of it so both share the column instead of splitting the strip.
-            draw_meter(&mut frame, meter_rect, self.meter, self.scale);
+            draw_meter(&mut frame, meter_rect, self.meter.at(Instant::now()), self.scale);
             draw_ruler(&mut frame, meter_rect, self.scale);
         }
         draw_track(
@@ -395,7 +463,9 @@ const RAIL_W: f32 = 3.5;
 const CAP_W: f32 = 22.0;
 const CAP_H: f32 = 15.0;
 const CAP_RADIUS: f32 = 3.0;
-const REF_R: f32 = 3.0;
+/// Half-length of the unity/default reference tick — wider than the rail
+/// so it reads as a mark crossing it, not a dot sitting on it.
+const REF_HALF_W: f32 = 6.0;
 
 fn draw_track(
     frame: &mut Frame,
@@ -410,7 +480,7 @@ fn draw_track(
     let cap_w = CAP_W * scale;
     let cap_h = CAP_H * scale;
     let cap_radius = CAP_RADIUS * scale;
-    let ref_r = REF_R * scale;
+    let ref_half_w = REF_HALF_W * scale;
 
     let (lo, hi) = range;
     let (t_lo, t_hi) = (vol_to_t(lo), vol_to_t(hi));
@@ -445,12 +515,17 @@ fn draw_track(
         frame.fill(&fill, theme::FADER);
     }
 
-    // Unity/default reference — a small hollow ring on the rail, like the
-    // 0 dB mark on a real console strip.
-    let ref_y = safe_clamp(pos_of(default_value), r.y + ref_r, r.y + r.height - ref_r);
+    // Unity/default reference — a tick crossing the rail, like the 0 dB
+    // mark on a real console strip (a dot read as a blob at this scale;
+    // a line reads immediately as "mark on a ruler").
+    let ref_y = safe_clamp(pos_of(default_value), r.y, r.y + r.height);
+    let ref_tick = Path::line(
+        Point::new(cx - ref_half_w, ref_y),
+        Point::new(cx + ref_half_w, ref_y),
+    );
     frame.stroke(
-        &Path::circle(Point::new(cx, ref_y), ref_r),
-        Stroke::default().with_color(theme::TEXT_SEC).with_width(1.0),
+        &ref_tick,
+        Stroke::default().with_color(theme::TEXT_SEC).with_width(1.5),
     );
 
     // Cap — flat + ridged, like a real fader cap grip, no heavy bevel.
@@ -549,12 +624,30 @@ where
 /// interaction at all — for a collapsed strip, which trades every control
 /// (fader, mute/solo, pan) for a glance-only level readout.
 struct VuMeter {
-    level: f32,
+    level: MeterFrame,
     scale: f32,
 }
 
 impl<Message> canvas::Program<Message> for VuMeter {
     type State = ();
+
+    fn update(
+        &self,
+        _state: &mut (),
+        event: &canvas::Event,
+        _bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Option<canvas::Action<Message>> {
+        // See `Fader`'s identical arm.
+        match event {
+            canvas::Event::Window(window::Event::RedrawRequested(now))
+                if self.level.is_settling(*now) =>
+            {
+                Some(canvas::Action::request_redraw())
+            }
+            _ => None,
+        }
+    }
 
     fn draw(
         &self,
@@ -569,13 +662,13 @@ impl<Message> canvas::Program<Message> for VuMeter {
             Point::ORIGIN,
             Size::new(METER_RULER_W * self.scale, bounds.height),
         );
-        draw_meter(&mut frame, meter_rect, self.level, self.scale);
+        draw_meter(&mut frame, meter_rect, self.level.at(Instant::now()), self.scale);
         draw_ruler(&mut frame, meter_rect, self.scale);
         vec![frame.into_geometry()]
     }
 }
 
-pub fn vu_meter<'a, Message: 'a>(level: f32, height: f32, scale: f32) -> Element<'a, Message> {
+pub fn vu_meter<'a, Message: 'a>(level: MeterFrame, height: f32, scale: f32) -> Element<'a, Message> {
     Canvas::new(VuMeter { level, scale })
         .width(Length::Fixed(METER_RULER_W * scale))
         .height(Length::Fixed(height))
@@ -805,6 +898,46 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn still_frame_is_never_settling() {
+        // prev == value: nothing to interpolate, so no reason to keep
+        // requesting redraws — this is what silence/idle looks like.
+        let f = MeterFrame::still(0.3);
+        assert!(!f.is_settling(f.since));
+        assert!(!f.is_settling(f.since + Duration::from_millis(10)));
+    }
+
+    #[test]
+    fn transitioning_frame_settles_after_the_interp_window() {
+        let f = MeterFrame {
+            prev: 0.2,
+            value: 0.8,
+            since: Instant::now(),
+        };
+        assert!(f.is_settling(f.since), "just started — should still be settling");
+        assert!(
+            f.is_settling(f.since + Duration::from_millis(10)),
+            "mid-transition — should still be settling"
+        );
+        assert!(
+            !f.is_settling(f.since + Duration::from_millis(60)),
+            "past the interp window — should have stopped requesting redraws"
+        );
+    }
+
+    #[test]
+    fn at_interpolates_linearly_between_prev_and_value() {
+        let f = MeterFrame {
+            prev: 0.0,
+            value: 1.0,
+            since: Instant::now(),
+        };
+        assert_eq!(f.at(f.since), 0.0);
+        assert_eq!(f.at(f.since + Duration::from_millis(50)), 1.0);
+        let mid = f.at(f.since + Duration::from_millis(25));
+        assert!((mid - 0.5).abs() < 0.01, "expected ~0.5 at the midpoint, got {mid}");
+    }
 
     #[test]
     fn fill_stays_green_below_hot_threshold() {

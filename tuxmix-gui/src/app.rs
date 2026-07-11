@@ -2,7 +2,7 @@ use iced::keyboard::{self, Key};
 use iced::widget::{column, container, pick_list, row, scrollable, text};
 use iced::{window, Element, Length, Subscription, Task};
 use std::collections::{HashMap, HashSet};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tuxmix_core::{
     BabyfacePro, ChannelId, ChannelType, MockBabyfacePro, RmeDevice, Scene,
@@ -11,6 +11,7 @@ use tuxmix_core::{
 use crate::matrix;
 use crate::scenes::{list_scene_files, load_scene_file, save_scene_file};
 use crate::theme;
+use crate::widgets::fader;
 use crate::widgets::strip;
 
 pub const OUT_LABELS: [&str; 6] = ["AN1/2", "PH3/4", "AS1/2", "A3/A4", "A5/A6", "A7/A8"];
@@ -244,7 +245,14 @@ const METER_RELEASE_MS: f32 = 300.0;
 /// Per-channel VU ballistics state.
 #[derive(Clone, Copy, Debug)]
 pub struct MeterAnim {
+    /// Value as of the *previous* `step` — the start of the current
+    /// keyframe transition `MeterFrame` interpolates from.
+    prev_value: f32,
     value: f32,
+    /// When `value` was last computed — the display layer (`MeterFrame`)
+    /// uses this to interpolate a smooth in-between value at full display
+    /// refresh rate instead of jumping once per `Tick`.
+    last_step_at: Instant,
     /// Time since the level last rose (i.e. since the last peak) — drives
     /// the release ease-out curve. Clamped at `METER_RELEASE_MS`, meaning
     /// "fully settled into the tail rate".
@@ -254,16 +262,23 @@ pub struct MeterAnim {
 impl MeterAnim {
     fn new() -> Self {
         Self {
+            prev_value: 0.0,
             value: 0.0,
+            last_step_at: Instant::now(),
             release_elapsed_ms: METER_RELEASE_MS,
         }
     }
 
-    pub fn value(&self) -> f32 {
-        self.value
+    pub fn frame(&self) -> fader::MeterFrame {
+        fader::MeterFrame {
+            prev: self.prev_value,
+            value: self.value,
+            since: self.last_step_at,
+        }
     }
 
     fn step(&mut self, target: f32) {
+        self.prev_value = self.value;
         if target >= self.value {
             self.value += (target - self.value) * METER_ATTACK;
             self.release_elapsed_ms = 0.0;
@@ -273,6 +288,7 @@ impl MeterAnim {
             let alpha = METER_RELEASE_END + (METER_RELEASE_START - METER_RELEASE_END) * (1.0 - t) * (1.0 - t);
             self.value += (target - self.value) * alpha;
         }
+        self.last_step_at = Instant::now();
     }
 }
 
@@ -471,7 +487,7 @@ fn section_header(label: &str, scale: f32) -> Element<'_, Message> {
         text(label).color(theme::TEXT_PRIMARY).size(theme::TEXT_MD * scale),
         iced::widget::rule::horizontal(1),
     ]
-    .spacing(8)
+    .spacing(theme::SPACE_LG)
     .align_y(iced::Alignment::Center)
     .into()
 }
@@ -481,7 +497,7 @@ fn section_header(label: &str, scale: f32) -> Element<'_, Message> {
 fn chip<'a>(content: impl Into<Element<'a, Message>>, scale: f32) -> Element<'a, Message> {
     container(content)
         .style(theme::chip)
-        .padding([5.0 * scale, 12.0 * scale])
+        .padding([theme::SPACE_SM * scale, theme::SPACE_XL * scale])
         .into()
 }
 
@@ -522,7 +538,7 @@ fn top_bar(state: &TuxMix) -> Element<'_, Message> {
                 .size(theme::TEXT_LG * scale),
             text(status_label).color(status_color).size(theme::TEXT_MD * scale),
         ]
-        .spacing(6)
+        .spacing(theme::SPACE_MD)
         .align_y(iced::Alignment::Center),
         scale,
     );
@@ -534,15 +550,15 @@ fn top_bar(state: &TuxMix) -> Element<'_, Message> {
     // target — Tab-key was the only way to switch).
     let tab_toggle = row![
         iced::widget::button(text("MIXER").size(theme::TEXT_MD * scale))
-            .padding([4.0 * scale, 10.0 * scale])
+            .padding([theme::SPACE_SM * scale, theme::SPACE_XL * scale])
             .style(theme::tab_toggle(!state.show_matrix))
             .on_press(Message::TabPressed),
         iced::widget::button(text("MATRIX").size(theme::TEXT_MD * scale))
-            .padding([4.0 * scale, 10.0 * scale])
+            .padding([theme::SPACE_SM * scale, theme::SPACE_XL * scale])
             .style(theme::tab_toggle(state.show_matrix))
             .on_press(Message::TabPressed),
     ]
-    .spacing(2);
+    .spacing(theme::SPACE_TIGHT);
 
     // Secondary session tools: scene / submix / clock. These used to be
     // three separate chips carrying the same visual weight as the device
@@ -584,7 +600,7 @@ fn top_bar(state: &TuxMix) -> Element<'_, Message> {
                 .color(theme::TEXT_SEC)
                 .size(theme::TEXT_XS * scale),
         ]
-        .spacing(8)
+        .spacing(theme::SPACE_LG)
         .align_y(iced::Alignment::Center),
         scale,
     );
@@ -596,27 +612,42 @@ fn top_bar(state: &TuxMix) -> Element<'_, Message> {
         iced::widget::Space::new().width(Length::Fill),
         session,
     ]
-    .spacing(14)
+    .spacing(theme::SPACE_XXL)
     .align_y(iced::Alignment::Center);
 
     container(bar)
         .style(theme::top_bar)
-        .padding([10.0 * scale, 16.0 * scale])
+        .padding([theme::SPACE_LG * scale, theme::SPACE_XXL * scale])
         .width(Length::Fill)
         .into()
 }
 
 fn mixer_view(state: &TuxMix) -> Element<'_, Message> {
-    let mut input_strips = row![].spacing(6);
+    let mut input_strips = row![].spacing(theme::SPACE_MD);
     let mut prev_type: Option<ChannelType> = None;
     for (i, ch) in state.device.inputs().iter().enumerate() {
         if prev_type.is_some_and(|t| t != ch.channel_type) {
-            input_strips = input_strips.push(iced::widget::rule::vertical(1));
+            // `rule::vertical` hardcodes `height: Length::Fill` with no way
+            // to override it — inside this row (itself `Length::Shrink`,
+            // sized to its tallest strip), that Fill child was pulling the
+            // *entire row* up to whatever space the window happened to
+            // have, leaving a large empty gap below Hardware Inputs on any
+            // window taller than its content. Wrapping it in a
+            // `Length::Shrink` container stops the Fill from escaping
+            // upward — it collapses to the container's own (content-sized)
+            // height instead of the whole window's.
+            input_strips = input_strips.push(
+                container(iced::widget::rule::vertical(1)).height(Length::Shrink),
+            );
         }
         prev_type = Some(ch.channel_type);
 
         let cid = ChannelId::Input(i);
-        let meter = state.input_meters.get(i).map(MeterAnim::value).unwrap_or(0.0);
+        let meter = state
+            .input_meters
+            .get(i)
+            .map(MeterAnim::frame)
+            .unwrap_or_else(|| fader::MeterFrame::still(0.0));
         let has_48v = ch.channel_type == ChannelType::Mic;
         let phantom = *state.phantom_overrides.get(&i).unwrap_or(&ch.phantom);
         let pad = *state.pad_overrides.get(&i).unwrap_or(&ch.pad);
@@ -648,10 +679,14 @@ fn mixer_view(state: &TuxMix) -> Element<'_, Message> {
         }));
     }
 
-    let mut pb_strips = row![].spacing(6);
+    let mut pb_strips = row![].spacing(theme::SPACE_MD);
     for (i, ch) in state.device.playbacks().iter().enumerate() {
         let cid = ChannelId::Playback(i);
-        let meter = state.playback_meters.get(i).map(MeterAnim::value).unwrap_or(0.0);
+        let meter = state
+            .playback_meters
+            .get(i)
+            .map(MeterAnim::frame)
+            .unwrap_or_else(|| fader::MeterFrame::still(0.0));
         let drag_range = state
             .drag_range
             .and_then(|(dc, lo, hi)| (dc == cid).then_some((lo, hi)));
@@ -680,7 +715,7 @@ fn mixer_view(state: &TuxMix) -> Element<'_, Message> {
         }));
     }
 
-    let mut out_strips = row![].spacing(6);
+    let mut out_strips = row![].spacing(theme::SPACE_MD);
     for (i, ch) in state.device.outputs().iter().enumerate() {
         let cid = ChannelId::Output(i);
         let drag_range = state
@@ -694,7 +729,7 @@ fn mixer_view(state: &TuxMix) -> Element<'_, Message> {
             type_tag: Some(("OUT", OUT_TAG)),
             vol: ch.volume,
             pan: 0,
-            meter: 0.0,
+            meter: fader::MeterFrame::still(0.0),
             has_48v: false,
             has_pad: false,
             phantom: false,
@@ -738,11 +773,11 @@ fn mixer_view(state: &TuxMix) -> Element<'_, Message> {
             ))
             .style(theme::scrollable),
     ]
-    .spacing(8);
+    .spacing(theme::SPACE_LG);
 
     container(body)
         .style(theme::root)
-        .padding([8, 12])
+        .padding([theme::SPACE_LG, theme::SPACE_XL])
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
@@ -757,11 +792,11 @@ fn matrix_view(state: &TuxMix) -> Element<'_, Message> {
             .size(theme::TEXT_XS * scale),
         matrix::view(state),
     ]
-    .spacing(8);
+    .spacing(theme::SPACE_LG);
 
     container(body)
         .style(theme::root)
-        .padding([8, 12])
+        .padding([theme::SPACE_LG, theme::SPACE_XL])
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
@@ -775,24 +810,24 @@ mod tests {
     fn attack_rises_fast() {
         let mut m = MeterAnim::new();
         m.step(1.0);
-        assert!(m.value() > 0.5, "one attack tick should jump most of the way: {}", m.value());
+        assert!(m.frame().value > 0.5, "one attack tick should jump most of the way: {}", m.frame().value);
     }
 
     #[test]
     fn release_decelerates_over_time() {
         let mut m = MeterAnim::new();
         m.step(1.0); // reach a peak first
-        let peak = m.value();
+        let peak = m.frame().value;
 
         m.step(0.0);
-        let drop_1 = peak - m.value();
+        let drop_1 = peak - m.frame().value;
 
         for _ in 0..10 {
             m.step(0.0);
         }
-        let before_late = m.value();
+        let before_late = m.frame().value;
         m.step(0.0);
-        let drop_late = before_late - m.value();
+        let drop_late = before_late - m.frame().value;
 
         assert!(
             drop_1 > drop_late,

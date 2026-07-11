@@ -8,7 +8,7 @@ use tuxmix_core::ChannelId;
 
 use crate::app::{db_text, short_label, Message};
 use crate::theme;
-use crate::widgets::fader::{fader, pan_indicator, vu_meter, Fader, PanIndicator};
+use crate::widgets::fader::{fader, pan_indicator, vu_meter, Fader, MeterFrame, PanIndicator};
 
 /// Base sizes at `scale == 1.0` (`theme::SCALE_DEFAULT`) — every dimension
 /// in a strip is one of these times `StripParams::scale`, so the live UI
@@ -29,7 +29,7 @@ pub struct StripParams<'a> {
     pub type_tag: Option<(&'static str, Color)>,
     pub vol: f32,
     pub pan: i8,
-    pub meter: f32,
+    pub meter: MeterFrame,
     pub has_48v: bool,
     pub has_pad: bool,
     pub phantom: bool,
@@ -82,8 +82,8 @@ fn header_row<'a>(
     .style(theme::plain_button)
     .on_press(Message::ToggleCollapse(cid));
 
-    let mut header =
-        row![text(short_label(name).to_string()).size(theme::TEXT_MD * scale)].spacing(2);
+    let mut header = row![text(short_label(name).to_string()).size(theme::TEXT_MD * scale)]
+        .spacing(theme::SPACE_TIGHT);
     if !collapsed {
         if let Some((tag, color)) = type_tag {
             header = header.push(text(tag).color(color).size(theme::TEXT_XS * scale));
@@ -104,13 +104,13 @@ fn collapsed_strip<'a>(p: StripParams<'a>) -> Element<'a, Message> {
         header_row(p.cid, &p.name, true, p.type_tag, p.scale),
         vu_meter(p.meter, FADER_H * p.scale, p.scale),
     ]
-    .spacing(1)
+    .spacing(theme::SPACE_HAIRLINE)
     .width(Length::Fill)
     .align_x(iced::Alignment::Center);
 
     container(rows)
         .style(theme::panel)
-        .padding([3.0 * p.scale, 6.0 * p.scale])
+        .padding([theme::SPACE_SM * p.scale, theme::SPACE_MD * p.scale])
         .width(Length::Fixed(COLLAPSED_W * p.scale))
         .into()
 }
@@ -140,13 +140,13 @@ pub fn strip<'a>(p: StripParams<'a>) -> Element<'a, Message> {
     // was sized for a wider sibling row (48V/PAD, or just a long channel
     // name) — filling the row makes every row use the card's full width
     // instead of only the widest one.
-    let ms_row = row![mute_btn, solo_btn].spacing(2).width(Length::Fill);
+    let ms_row = row![mute_btn, solo_btn].spacing(theme::SPACE_TIGHT).width(Length::Fill);
 
-    let mut rows = column![header, ms_row].spacing(1);
+    let mut rows = column![header, ms_row].spacing(theme::SPACE_HAIRLINE);
 
     if let ChannelId::Input(idx) = cid {
         if p.has_48v || p.has_pad {
-            let mut tg_row = row![].spacing(2).width(Length::Fill);
+            let mut tg_row = row![].spacing(theme::SPACE_TIGHT).width(Length::Fill);
             if p.has_48v {
                 tg_row = tg_row.push(
                     button(centered_label("48V", theme::TEXT_SM * scale))
@@ -230,7 +230,7 @@ pub fn strip<'a>(p: StripParams<'a>) -> Element<'a, Message> {
                 }),
                 text(pan_str).color(theme::TEXT_SEC).size(theme::TEXT_XS * scale),
             ]
-            .spacing(1)
+            .spacing(theme::SPACE_HAIRLINE)
             .align_x(iced::Alignment::Center),
         );
     }
@@ -240,7 +240,7 @@ pub fn strip<'a>(p: StripParams<'a>) -> Element<'a, Message> {
             .align_x(iced::Alignment::Center),
     )
     .style(theme::panel)
-    .padding([3.0 * scale, 6.0 * scale])
+    .padding([theme::SPACE_SM * scale, theme::SPACE_MD * scale])
     .width(Length::Fixed(STRIP_W * scale))
     .into()
 }
