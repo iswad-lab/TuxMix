@@ -23,6 +23,10 @@ const METER_RULER_W: f32 = 30.0;
 const GAP: f32 = 6.0;
 const TRACK_W: f32 = 26.0;
 const DOUBLE_CLICK: Duration = Duration::from_millis(400);
+/// Gap after the last `WheelScrolled` event that means "this is a new
+/// gesture" rather than a continuation — wheel scrolling has no
+/// press/release framing to mark that boundary explicitly.
+const SCROLL_IDLE: Duration = Duration::from_millis(200);
 /// Shift-drag sensitivity reduction: cursor travel over the whole track
 /// only moves the value by this fraction of what a normal drag would.
 /// Earlier this remapped `range` to a narrow absolute value window instead
@@ -105,6 +109,24 @@ pub struct State {
     /// instead of jumping (which a fixed press-time anchor, or falling
     /// back to absolute cursor tracking, would both cause).
     drag_pos: Option<f32>,
+    /// Tapered position accumulated across the current drag. A real mouse
+    /// fires several `CursorMoved` events per rendered frame — `self.value`
+    /// only reflects the *last frame's* published value, so basing each
+    /// event's target on `self.value` silently drops every event but the
+    /// last one in a batch (each recomputes from the same stale baseline
+    /// instead of building on what the previous event in that same batch
+    /// already published). Accumulating here instead, in widget-local
+    /// state that persists across every event regardless of render
+    /// timing, makes the cap track the cursor 1:1 no matter how events
+    /// happen to batch.
+    drag_t: Option<f32>,
+    /// Same accumulator problem as `drag_t`, for wheel-scroll nudges — a
+    /// fast trackpad swipe fires many `Pixels` events per gesture, easily
+    /// several per rendered frame. No press/release frames a scroll
+    /// gesture the way a drag does, so a gesture boundary is inferred from
+    /// an idle gap instead (`SCROLL_IDLE`).
+    scroll_t: Option<f32>,
+    last_scroll: Option<Instant>,
 }
 
 impl<Message> canvas::Program<Message> for Fader<Message> {
@@ -136,6 +158,7 @@ impl<Message> canvas::Program<Message> for Fader<Message> {
                     state.dragging = false;
                     state.last_click = None;
                     state.drag_pos = None;
+                    state.drag_t = None;
                     return Some(canvas::Action::publish((self.on_reset)()).and_capture());
                 }
                 state.last_click = Some(now);
@@ -143,6 +166,7 @@ impl<Message> canvas::Program<Message> for Fader<Message> {
 
                 let value = locate(pos.y);
                 state.drag_pos = Some(pos.y);
+                state.drag_t = Some(vol_to_t(value));
                 Some(canvas::Action::publish((self.on_press)(value, None)).and_capture())
             }
             canvas::Event::Mouse(mouse::Event::CursorMoved { .. }) => {
@@ -157,8 +181,10 @@ impl<Message> canvas::Program<Message> for Fader<Message> {
                 } else {
                     1.0
                 };
-                let t = (vol_to_t(self.value) + screen_dt * mult).clamp(0.0, 1.0);
+                let base_t = state.drag_t.unwrap_or_else(|| vol_to_t(self.value));
+                let t = (base_t + screen_dt * mult).clamp(0.0, 1.0);
                 state.drag_pos = Some(pos.y);
+                state.drag_t = Some(t);
                 Some(canvas::Action::publish((self.on_drag)(t_to_vol(t))).and_capture())
             }
             canvas::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
@@ -167,6 +193,7 @@ impl<Message> canvas::Program<Message> for Fader<Message> {
                 }
                 state.dragging = false;
                 state.drag_pos = None;
+                state.drag_t = None;
                 Some(canvas::Action::publish((self.on_release)()).and_capture())
             }
             canvas::Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
@@ -196,8 +223,18 @@ impl<Message> canvas::Program<Message> for Fader<Message> {
                 } else {
                     1.0
                 };
-                let t = vol_to_t(self.value);
-                let new_t = (t + dy * base_step * mult).clamp(0.0, 1.0);
+                let now = Instant::now();
+                let fresh_gesture = state
+                    .last_scroll
+                    .is_none_or(|t| now.duration_since(t) > SCROLL_IDLE);
+                let base_t = if fresh_gesture {
+                    vol_to_t(self.value)
+                } else {
+                    state.scroll_t.unwrap_or_else(|| vol_to_t(self.value))
+                };
+                let new_t = (base_t + dy * base_step * mult).clamp(0.0, 1.0);
+                state.scroll_t = Some(new_t);
+                state.last_scroll = Some(now);
                 let value = t_to_vol(new_t);
                 Some(canvas::Action::publish((self.on_drag)(value)).and_capture())
             }
@@ -569,6 +606,13 @@ pub struct PanState {
     /// Last cursor X seen during an active drag — see `Fader::State::drag_pos`
     /// for why this is re-read fresh every move instead of a fixed anchor.
     drag_pos: Option<f32>,
+    /// Accumulated pan position (in [-1, 1] t-space) across the current
+    /// drag — see `Fader::State::drag_t` for why this can't be re-derived
+    /// from `self.pan` on every event.
+    drag_t: Option<f32>,
+    /// See `Fader::State::scroll_t`/`last_scroll`.
+    scroll_t: Option<f32>,
+    last_scroll: Option<Instant>,
 }
 
 fn pan_usable_width(bounds_width: f32, scale: f32) -> f32 {
@@ -612,6 +656,7 @@ impl<Message> canvas::Program<Message> for PanIndicator<Message> {
                     state.dragging = false;
                     state.last_click = None;
                     state.drag_pos = None;
+                    state.drag_t = None;
                     return Some(canvas::Action::publish((self.on_reset)()).and_capture());
                 }
                 state.last_click = Some(now);
@@ -619,6 +664,7 @@ impl<Message> canvas::Program<Message> for PanIndicator<Message> {
 
                 let pan = locate_pan(pos.x, bounds, self.scale);
                 state.drag_pos = Some(pos.x);
+                state.drag_t = Some(pan_to_t(pan));
                 Some(canvas::Action::publish((self.on_change)(pan)).and_capture())
             }
             canvas::Event::Mouse(mouse::Event::CursorMoved { .. }) => {
@@ -633,8 +679,10 @@ impl<Message> canvas::Program<Message> for PanIndicator<Message> {
                 } else {
                     1.0
                 };
-                let t = pan_to_t(self.pan) + screen_dt * mult;
+                let base_t = state.drag_t.unwrap_or_else(|| pan_to_t(self.pan));
+                let t = base_t + screen_dt * mult;
                 state.drag_pos = Some(pos.x);
+                state.drag_t = Some(t);
                 Some(canvas::Action::publish((self.on_change)(t_to_pan(t))).and_capture())
             }
             canvas::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
@@ -643,6 +691,7 @@ impl<Message> canvas::Program<Message> for PanIndicator<Message> {
                 }
                 state.dragging = false;
                 state.drag_pos = None;
+                state.drag_t = None;
                 None
             }
             canvas::Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
@@ -663,7 +712,18 @@ impl<Message> canvas::Program<Message> for PanIndicator<Message> {
                 } else {
                     1.0
                 };
-                let t = pan_to_t(self.pan) + dy * base_step * mult;
+                let now = Instant::now();
+                let fresh_gesture = state
+                    .last_scroll
+                    .is_none_or(|t| now.duration_since(t) > SCROLL_IDLE);
+                let base_t = if fresh_gesture {
+                    pan_to_t(self.pan)
+                } else {
+                    state.scroll_t.unwrap_or_else(|| pan_to_t(self.pan))
+                };
+                let t = base_t + dy * base_step * mult;
+                state.scroll_t = Some(t);
+                state.last_scroll = Some(now);
                 Some(canvas::Action::publish((self.on_change)(t_to_pan(t))).and_capture())
             }
             _ => None,
