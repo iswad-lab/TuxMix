@@ -434,7 +434,15 @@ pub fn update(state: &mut TuxMix, message: Message) -> Task<Message> {
         }
         Message::SceneLoad(name) => {
             if let Some(scene) = load_scene_file(&name) {
-                let _ = state.device.apply_scene(&scene);
+                // Was previously `let _ = ...` — silently discarded a
+                // scene/device model mismatch (or any other apply
+                // failure) with no way for the user to ever find out
+                // why nothing happened. No toast/notification system
+                // exists yet, so a log line is the minimum fix that
+                // makes the failure observable at all.
+                if let Err(err) = state.device.apply_scene(&scene) {
+                    log::warn!("Failed to apply scene '{name}': {err}");
+                }
             }
         }
         Message::ModifiersChanged(m) => state.modifiers = m,

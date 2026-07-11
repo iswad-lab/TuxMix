@@ -17,4 +17,10 @@ pub enum Error {
 
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
+
+    #[error("Scene captured on '{scene_model}' cannot be applied to '{device_model}'")]
+    SceneModelMismatch {
+        scene_model: String,
+        device_model: String,
+    },
 }

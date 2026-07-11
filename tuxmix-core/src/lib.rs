@@ -19,6 +19,8 @@ pub mod device;
 pub mod error;
 pub mod mixer;
 pub mod mock;
+pub mod profile;
+pub mod profiles;
 pub mod scene;
 
 pub use babyface::BabyfacePro;

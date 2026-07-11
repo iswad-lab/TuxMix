@@ -13,41 +13,8 @@ use rand::Rng;
 use crate::channel::*;
 use crate::device::{DeviceSettings, RmeDevice};
 use crate::error::Error;
+use crate::profiles::babyface_pro::PROFILE;
 use crate::scene::Scene;
-
-// ── Constants (mirrors babyface.rs) ──────────────────────────────
-
-const MODEL_NAME: &str = "Babyface Pro FS (mock)";
-const OUTPUT_PAIRS: usize = 6;
-const INPUT_COUNT: usize = 12;
-
-const INPUT_NAMES: [&str; INPUT_COUNT] = [
-    "AN1", "AN2", "IN3", "IN4", "AS1", "AS2", "ADAT3", "ADAT4", "ADAT5", "ADAT6", "ADAT7", "ADAT8",
-];
-
-const INPUT_TYPES: [ChannelType; INPUT_COUNT] = [
-    ChannelType::Mic,
-    ChannelType::Mic,
-    ChannelType::Instrument,
-    ChannelType::Instrument,
-    ChannelType::Line,
-    ChannelType::Line,
-    ChannelType::ADAT,
-    ChannelType::ADAT,
-    ChannelType::ADAT,
-    ChannelType::ADAT,
-    ChannelType::ADAT,
-    ChannelType::ADAT,
-];
-
-const OUTPUT_NAMES: [(&str, &str); OUTPUT_PAIRS] = [
-    ("AN1", "AN2"),
-    ("PH3", "PH4"),
-    ("AS1", "AS2"),
-    ("ADAT3", "ADAT4"),
-    ("ADAT5", "ADAT6"),
-    ("ADAT7", "ADAT8"),
-];
 
 // ── Main struct ─────────────────────────────────────────────────
 
@@ -55,7 +22,11 @@ const OUTPUT_NAMES: [(&str, &str); OUTPUT_PAIRS] = [
 ///
 /// All state is kept in memory. Every operation succeeds immediately.
 /// Use this to develop or test UI code without a physical RME device.
+/// Topology (channel counts/names/types) comes from the same
+/// [`PROFILE`] as [`crate::BabyfacePro`], so the two can't drift apart
+/// the way the old hand-duplicated const tables did.
 pub struct MockBabyfacePro {
+    model_name: String,
     inputs: Vec<InputChannel>,
     playbacks: Vec<PlaybackChannel>,
     outputs: Vec<OutputChannel>,
@@ -66,49 +37,6 @@ pub struct MockBabyfacePro {
 }
 
 impl MockBabyfacePro {
-    fn build_inputs() -> Vec<InputChannel> {
-        INPUT_NAMES
-            .iter()
-            .enumerate()
-            .map(|(i, name)| {
-                let mut ch = InputChannel::new(i, name, INPUT_TYPES[i], OUTPUT_PAIRS);
-                ch.phantom = i < 2;
-                ch.sensitivity = if INPUT_TYPES[i] == ChannelType::Instrument {
-                    Some(Sensitivity::Plus4dBu)
-                } else {
-                    None
-                };
-                ch
-            })
-            .collect()
-    }
-
-    fn build_playbacks() -> Vec<PlaybackChannel> {
-        let mut pbs = Vec::new();
-        for (i, (l, r)) in OUTPUT_NAMES.iter().enumerate() {
-            pbs.push(PlaybackChannel::new(
-                i * 2,
-                &format!("PCM {}", l),
-                OUTPUT_PAIRS,
-            ));
-            pbs.push(PlaybackChannel::new(
-                i * 2 + 1,
-                &format!("PCM {}", r),
-                OUTPUT_PAIRS,
-            ));
-        }
-        pbs
-    }
-
-    fn build_outputs() -> Vec<OutputChannel> {
-        let mut outs = Vec::new();
-        for (i, (l, r)) in OUTPUT_NAMES.iter().enumerate() {
-            outs.push(OutputChannel::new(i * 2, &format!("OUT {}", l)));
-            outs.push(OutputChannel::new(i * 2 + 1, &format!("OUT {}", r)));
-        }
-        outs
-    }
-
     fn update_meters(&mut self) {
         let mut rng = rand::thread_rng();
         self.tick += 1;
@@ -184,26 +112,35 @@ impl MockBabyfacePro {
 
 impl RmeDevice for MockBabyfacePro {
     fn model_name(&self) -> &str {
-        MODEL_NAME
+        &self.model_name
     }
 
     fn output_pair_count(&self) -> usize {
-        OUTPUT_PAIRS
+        PROFILE.output_pair_count()
     }
 
     fn open() -> Result<Self, Error> {
+        // Same topology as the real device, plus a mock-only demo
+        // default: the first two (Mic) inputs start with phantom power
+        // on, so the UI has something interesting to show immediately.
+        let mut inputs = PROFILE.build_inputs();
+        for (i, ch) in inputs.iter_mut().enumerate() {
+            ch.phantom = i < 2;
+        }
+
         Ok(Self {
-            inputs: Self::build_inputs(),
-            playbacks: Self::build_playbacks(),
-            outputs: Self::build_outputs(),
+            model_name: format!("{} (mock)", PROFILE.model_name),
+            inputs,
+            playbacks: PROFILE.build_playbacks(),
+            outputs: PROFILE.build_outputs(),
             settings: DeviceSettings {
                 clock_source: "Internal".into(),
                 spdif_optical: false,
                 spdif_emphasis: false,
                 spdif_professional: false,
             },
-            input_meters: vec![0.0; INPUT_COUNT],
-            playback_meters: vec![0.0; OUTPUT_PAIRS * 2],
+            input_meters: vec![0.0; PROFILE.input_count()],
+            playback_meters: vec![0.0; PROFILE.output_pair_count() * 2],
             tick: 0,
         })
     }
@@ -363,6 +300,7 @@ impl RmeDevice for MockBabyfacePro {
     fn capture_scene(&self) -> Scene {
         Scene {
             name: "Untitled".into(),
+            model: self.model_name.clone(),
             inputs: self.inputs.clone(),
             playbacks: self.playbacks.clone(),
             outputs: self.outputs.clone(),
@@ -371,6 +309,7 @@ impl RmeDevice for MockBabyfacePro {
     }
 
     fn apply_scene(&mut self, scene: &Scene) -> Result<(), Error> {
+        scene.check_compatible(&self.model_name)?;
         self.inputs = scene.inputs.clone();
         self.playbacks = scene.playbacks.clone();
         self.outputs = scene.outputs.clone();
@@ -542,5 +481,33 @@ mod tests {
         assert!(dev.inputs()[0].phantom);
         assert!(dev.inputs()[1].phantom);
         assert!(!dev.inputs()[2].phantom);
+    }
+
+    #[test]
+    fn test_captured_scene_is_tagged_with_model() {
+        let dev = MockBabyfacePro::open().unwrap();
+        let scene = dev.capture_scene();
+        assert_eq!(scene.model, dev.model_name());
+    }
+
+    #[test]
+    fn test_apply_scene_rejects_model_mismatch() {
+        let mut dev = MockBabyfacePro::open().unwrap();
+        let mut scene = dev.capture_scene();
+        scene.model = "Some Other RME Device".into();
+
+        let err = dev.apply_scene(&scene).unwrap_err();
+        assert!(matches!(err, Error::SceneModelMismatch { .. }));
+    }
+
+    #[test]
+    fn test_apply_scene_accepts_legacy_scene_with_no_model() {
+        let mut dev = MockBabyfacePro::open().unwrap();
+        let mut scene = dev.capture_scene();
+        scene.model = String::new(); // simulates a scene saved before `model` existed
+        scene.inputs[0].volumes[0] = 0.42;
+
+        dev.apply_scene(&scene).unwrap();
+        assert!((dev.volume(ChannelId::Input(0), 0).unwrap() - 0.42).abs() < 1e-6);
     }
 }

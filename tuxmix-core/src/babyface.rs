@@ -8,51 +8,18 @@ use crate::channel::*;
 use crate::device::{DeviceSettings, RmeDevice};
 use crate::error::Error;
 use crate::mixer::AlsaMixer;
+use crate::profile::DeviceProfile;
+use crate::profiles::babyface_pro::PROFILE;
 use crate::scene::Scene;
 
-// ── Constants ──────────────────────────────────────────────────
-
-/// ALSA card name substring used for detection.
-const CARD_SUBSTRING: &str = "Babyface Pro";
-
-/// Number of hardware input channels.
-const INPUT_COUNT: usize = 12;
-
-/// Number of stereo output pairs.
-const OUTPUT_PAIRS: usize = 6;
-
-/// Names of the hardware input channels.
-const INPUT_NAMES: [&str; INPUT_COUNT] = [
-    "AN1", "AN2", "IN3", "IN4", "AS1", "AS2", "ADAT3", "ADAT4", "ADAT5", "ADAT6", "ADAT7", "ADAT8",
-];
-
-/// Types of each input channel.
-const INPUT_TYPES: [ChannelType; INPUT_COUNT] = [
-    ChannelType::Mic,
-    ChannelType::Mic,
-    ChannelType::Instrument,
-    ChannelType::Instrument,
-    ChannelType::Line,
-    ChannelType::Line,
-    ChannelType::ADAT,
-    ChannelType::ADAT,
-    ChannelType::ADAT,
-    ChannelType::ADAT,
-    ChannelType::ADAT,
-    ChannelType::ADAT,
-];
-
-/// Stereo output pair names.
-const OUTPUT_NAMES: [(&str, &str); OUTPUT_PAIRS] = [
-    ("AN1", "AN2"),
-    ("PH3", "PH4"),
-    ("AS1", "AS2"),
-    ("ADAT3", "ADAT4"),
-    ("ADAT5", "ADAT6"),
-    ("ADAT7", "ADAT8"),
-];
-
 // ── Helpers ────────────────────────────────────────────────────
+//
+// NOTE: these two functions encode the ALSA selem naming grammar
+// observed on the Babyface Pro FS specifically (`"<Type>-<Name>-
+// <Output>"`, `" 48V"`/`" PAD"`/`" Sens."` suffixes, `"Clock Mode"`).
+// This is *not* confirmed to be shared by other RME models — if you're
+// porting this file for a second device, re-verify against real
+// `amixer scontents` output before assuming these patterns transfer.
 
 fn selem_name(ch_type: &str, ch_name: &str, out_name: &str) -> String {
     format!("{}-{}-{}", ch_type, ch_name, out_name)
@@ -71,6 +38,7 @@ fn ch_type_str(ct: ChannelType) -> &'static str {
 /// Babyface Pro (FS) device controller.
 pub struct BabyfacePro {
     mixer: AlsaMixer,
+    profile: &'static DeviceProfile,
     inputs: Vec<InputChannel>,
     playbacks: Vec<PlaybackChannel>,
     outputs: Vec<OutputChannel>,
@@ -78,48 +46,6 @@ pub struct BabyfacePro {
 }
 
 impl BabyfacePro {
-    fn build_inputs() -> Vec<InputChannel> {
-        INPUT_NAMES
-            .iter()
-            .enumerate()
-            .map(|(i, name)| {
-                let mut ch = InputChannel::new(i, name, INPUT_TYPES[i], OUTPUT_PAIRS);
-                ch.sensitivity = if INPUT_TYPES[i] == ChannelType::Instrument {
-                    Some(Sensitivity::Plus4dBu)
-                } else {
-                    None
-                };
-                ch
-            })
-            .collect()
-    }
-
-    fn build_playbacks() -> Vec<PlaybackChannel> {
-        let mut pbs = Vec::new();
-        for (i, (l, r)) in OUTPUT_NAMES.iter().enumerate() {
-            pbs.push(PlaybackChannel::new(
-                i * 2,
-                &format!("PCM {}", l),
-                OUTPUT_PAIRS,
-            ));
-            pbs.push(PlaybackChannel::new(
-                i * 2 + 1,
-                &format!("PCM {}", r),
-                OUTPUT_PAIRS,
-            ));
-        }
-        pbs
-    }
-
-    fn build_outputs() -> Vec<OutputChannel> {
-        let mut outs = Vec::new();
-        for (i, (l, _r)) in OUTPUT_NAMES.iter().enumerate() {
-            outs.push(OutputChannel::new(i * 2, &format!("OUT {}", l)));
-            outs.push(OutputChannel::new(i * 2 + 1, &format!("OUT {}", _r)));
-        }
-        outs
-    }
-
     /// Match ALSA mixer elements to our channel model.
     fn attach_mixer_elements(&mut self) {
         let mono = SelemChannelId::mono();
@@ -176,10 +102,9 @@ impl BabyfacePro {
             // ── Per-output volumes ──────────────────────────
             for i in 0..self.inputs.len() {
                 let ct = ch_type_str(self.inputs[i].channel_type);
-                for out_idx in 0..OUTPUT_PAIRS {
-                    let (out_l, out_r) = OUTPUT_NAMES[out_idx];
-                    let expected_l = selem_name(ct, &self.inputs[i].name, out_l);
-                    let expected_r = selem_name(ct, &self.inputs[i].name, out_r);
+                for (out_idx, pair) in self.profile.outputs.iter().enumerate() {
+                    let expected_l = selem_name(ct, &self.inputs[i].name, pair.left);
+                    let expected_r = selem_name(ct, &self.inputs[i].name, pair.right);
                     if name == expected_l || name == expected_r {
                         if let Ok(v) = selem.get_playback_volume(mono) {
                             self.inputs[i].volumes[out_idx] = (v as f32) / 65536.0;
@@ -192,10 +117,9 @@ impl BabyfacePro {
             // ── Per-output volumes for playbacks ────────────
             for i in 0..self.playbacks.len() {
                 let ch_name = &self.playbacks[i].name[4..]; // strip "PCM "
-                for out_idx in 0..OUTPUT_PAIRS {
-                    let (out_l, out_r) = OUTPUT_NAMES[out_idx];
-                    let expected_l = selem_name("PCM", ch_name, out_l);
-                    let expected_r = selem_name("PCM", ch_name, out_r);
+                for (out_idx, pair) in self.profile.outputs.iter().enumerate() {
+                    let expected_l = selem_name("PCM", ch_name, pair.left);
+                    let expected_r = selem_name("PCM", ch_name, pair.right);
                     if name == expected_l || name == expected_r {
                         if let Ok(v) = selem.get_playback_volume(mono) {
                             self.playbacks[i].volumes[out_idx] = (v as f32) / 65536.0;
@@ -257,21 +181,23 @@ impl BabyfacePro {
 
 impl RmeDevice for BabyfacePro {
     fn model_name(&self) -> &str {
-        "Babyface Pro FS"
+        self.profile.model_name
     }
 
     fn output_pair_count(&self) -> usize {
-        OUTPUT_PAIRS
+        self.profile.output_pair_count()
     }
 
     fn open() -> Result<Self, Error> {
         info!("Searching for RME Babyface Pro...");
-        let mixer = AlsaMixer::open_by_card_name(CARD_SUBSTRING)?;
+        let profile = &PROFILE;
+        let mixer = AlsaMixer::open_by_card_name(profile.card_substring)?;
         let mut device = Self {
             mixer,
-            inputs: Self::build_inputs(),
-            playbacks: Self::build_playbacks(),
-            outputs: Self::build_outputs(),
+            profile,
+            inputs: profile.build_inputs(),
+            playbacks: profile.build_playbacks(),
+            outputs: profile.build_outputs(),
             settings: DeviceSettings {
                 clock_source: "Internal".into(),
                 spdif_optical: false,
@@ -316,7 +242,7 @@ impl RmeDevice for BabyfacePro {
     }
 
     fn set_volume(&mut self, channel: ChannelId, output: usize, volume: f32) -> Result<(), Error> {
-        if output >= OUTPUT_PAIRS {
+        if output >= self.profile.output_pair_count() {
             return Err(Error::InvalidChannel(format!("Output {}", output)));
         }
 
@@ -343,8 +269,8 @@ impl RmeDevice for BabyfacePro {
         };
 
         if !ch_name.is_empty() {
-            let (out_l, out_r) = OUTPUT_NAMES[output];
-            for out_name in [out_l, out_r] {
+            let pair = &self.profile.outputs[output];
+            for out_name in [pair.left, pair.right] {
                 let elem_name = selem_name(ch_type, &ch_name, out_name);
                 if let Some(selem) = self.mixer.find_selem(&elem_name, 0) {
                     selem.set_playback_volume(mono, vol_raw)?;
@@ -459,6 +385,7 @@ impl RmeDevice for BabyfacePro {
     fn capture_scene(&self) -> Scene {
         Scene {
             name: "Untitled".into(),
+            model: self.profile.model_name.to_string(),
             inputs: self.inputs.clone(),
             playbacks: self.playbacks.clone(),
             outputs: self.outputs.clone(),
@@ -467,6 +394,7 @@ impl RmeDevice for BabyfacePro {
     }
 
     fn apply_scene(&mut self, scene: &Scene) -> Result<(), Error> {
+        scene.check_compatible(self.profile.model_name)?;
         for (i, saved) in scene.inputs.iter().enumerate() {
             for (out, &v) in saved.volumes.iter().enumerate() {
                 self.set_volume(ChannelId::Input(i), out, v)?;
