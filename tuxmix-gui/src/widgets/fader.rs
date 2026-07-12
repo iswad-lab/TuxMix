@@ -179,6 +179,15 @@ pub struct State {
     /// an idle gap instead (`SCROLL_IDLE`).
     scroll_t: Option<f32>,
     last_scroll: Option<Instant>,
+    /// Displayed (possibly still-easing) cap position, kept separate from
+    /// `self.value` (the authoritative target) so a value change that
+    /// *didn't* come from this fader's own drag — another channel moving
+    /// together in a group selection, a scene load — eases into place
+    /// instead of snapping, the same way the VU meter does. Not consulted
+    /// while `dragging` is true: the user's own drag already updates on
+    /// every mouse event, so layering interpolation on top of that would
+    /// only add latency, not smoothness.
+    display: Option<MeterFrame>,
 }
 
 impl<Message> canvas::Program<Message> for Fader<Message> {
@@ -251,6 +260,13 @@ impl<Message> canvas::Program<Message> for Fader<Message> {
                 state.dragging = false;
                 state.drag_pos = None;
                 state.drag_t = None;
+                // While dragging, draw() reads self.value directly and
+                // never touches `display` — resync it to the just-released
+                // position now, so the next external change eases in from
+                // here rather than from whatever `display` was cached at
+                // before the drag started (which would show as a snap-back
+                // glitch the instant dragging ends).
+                state.display = Some(MeterFrame::still(self.value));
                 Some(canvas::Action::publish((self.on_release)()).and_capture())
             }
             canvas::Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
@@ -296,11 +312,27 @@ impl<Message> canvas::Program<Message> for Fader<Message> {
                 Some(canvas::Action::publish((self.on_drag)(value)).and_capture())
             }
             // Keeps redrawing at full display refresh rate while the meter
-            // is still interpolating between its last two polled keyframes
-            // — settles back to the normal Tick-driven rate on its own
-            // once caught up (see `MeterFrame`).
+            // and/or the cap itself are still interpolating — settles back
+            // to the normal Tick-driven rate on its own once caught up
+            // (see `MeterFrame`).
             canvas::Event::Window(window::Event::RedrawRequested(now)) => {
-                if self.show_meter && self.meter.is_settling(*now) {
+                let mut still_animating = self.show_meter && self.meter.is_settling(*now);
+
+                if !state.dragging {
+                    let display = state
+                        .display
+                        .get_or_insert_with(|| MeterFrame::still(self.value));
+                    if (display.value - self.value).abs() > f32::EPSILON {
+                        *display = MeterFrame {
+                            prev: display.at(*now),
+                            value: self.value,
+                            since: *now,
+                        };
+                    }
+                    still_animating |= display.is_settling(*now);
+                }
+
+                if still_animating {
                     Some(canvas::Action::request_redraw())
                 } else {
                     None
@@ -329,13 +361,21 @@ impl<Message> canvas::Program<Message> for Fader<Message> {
             draw_meter(&mut frame, meter_rect, self.meter.at(Instant::now()), self.scale);
             draw_ruler(&mut frame, meter_rect, self.scale);
         }
+        let display_value = if state.dragging {
+            self.value
+        } else {
+            state
+                .display
+                .map(|d| d.at(Instant::now()))
+                .unwrap_or(self.value)
+        };
         draw_track(
             &mut frame,
             Rectangle::new(
                 Point::new(self.track_x(), 0.0),
                 Size::new(TRACK_W * self.scale, bounds.height),
             ),
-            self.value,
+            display_value,
             self.default_value,
             self.range,
             state.dragging,
@@ -706,6 +746,10 @@ pub struct PanState {
     /// See `Fader::State::scroll_t`/`last_scroll`.
     scroll_t: Option<f32>,
     last_scroll: Option<Instant>,
+    /// See `Fader::State::display` — same easing for pan changes that
+    /// didn't come from this widget's own drag. Interpolated in the same
+    /// `-100..100` units as `self.pan`, converted to `t` only at draw time.
+    display: Option<MeterFrame>,
 }
 
 fn pan_usable_width(bounds_width: f32, scale: f32) -> f32 {
@@ -785,6 +829,8 @@ impl<Message> canvas::Program<Message> for PanIndicator<Message> {
                 state.dragging = false;
                 state.drag_pos = None;
                 state.drag_t = None;
+                // See Fader::update's identical ButtonReleased arm.
+                state.display = Some(MeterFrame::still(self.pan as f32));
                 None
             }
             canvas::Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
@@ -819,6 +865,27 @@ impl<Message> canvas::Program<Message> for PanIndicator<Message> {
                 state.last_scroll = Some(now);
                 Some(canvas::Action::publish((self.on_change)(t_to_pan(t))).and_capture())
             }
+            // See Fader::update's identical arm.
+            canvas::Event::Window(window::Event::RedrawRequested(now)) => {
+                if state.dragging {
+                    return None;
+                }
+                let display = state
+                    .display
+                    .get_or_insert_with(|| MeterFrame::still(self.pan as f32));
+                if (display.value - self.pan as f32).abs() > f32::EPSILON {
+                    *display = MeterFrame {
+                        prev: display.at(*now),
+                        value: self.pan as f32,
+                        since: *now,
+                    };
+                }
+                if display.is_settling(*now) {
+                    Some(canvas::Action::request_redraw())
+                } else {
+                    None
+                }
+            }
             _ => None,
         }
     }
@@ -852,7 +919,15 @@ impl<Message> canvas::Program<Message> for PanIndicator<Message> {
             Stroke::default().with_color(theme::TEXT_SEC).with_width(1.0),
         );
 
-        let t = (self.pan as f32 / 100.0).clamp(-1.0, 1.0);
+        let display_pan = if state.dragging {
+            self.pan as f32
+        } else {
+            state
+                .display
+                .map(|d| d.at(Instant::now()))
+                .unwrap_or(self.pan as f32)
+        };
+        let t = (display_pan / 100.0).clamp(-1.0, 1.0);
         let usable = pan_usable_width(bounds.width, self.scale);
         let dot_x = cx + t * usable;
         let dot_color = if state.dragging {
