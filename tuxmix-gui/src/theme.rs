@@ -119,13 +119,47 @@ pub fn panel(_theme: &iced::Theme) -> container::Style {
     }
 }
 
+/// Linear-interpolates `base` toward `tint` by `amount` (0 = pure `base`,
+/// 1 = pure `tint`), keeping `base`'s own alpha — used to tint a strip
+/// card just enough to read as "this channel's category" at a glance
+/// without competing with the accent-colored selection border or making
+/// the card itself look like a colored badge.
+fn blend(base: Color, tint: Color, amount: f32) -> Color {
+    Color {
+        r: base.r + (tint.r - base.r) * amount,
+        g: base.g + (tint.g - base.g) * amount,
+        b: base.b + (tint.b - base.b) * amount,
+        a: base.a,
+    }
+}
+
+/// How strongly a strip's `tint` (its channel type's own color — the same
+/// one already used for its type-tag badge) is blended into the card
+/// background. Subtle on purpose: enough to sort channel types apart at a
+/// glance in a long scrolled row, not so much it reads as a colored
+/// button the way the type tag itself does.
+const STRIP_TINT_AMOUNT: f32 = 0.10;
+
 /// A strip's card — same as `panel`, but with an accent-colored border
 /// when part of the active multi-selection (Ctrl/Shift+click), so grouped
 /// mute/solo/collapse actions have a clear "this is what I'm about to
-/// affect" indicator.
-pub fn strip_panel(selected: bool) -> impl Fn(&iced::Theme) -> container::Style {
+/// affect" indicator — and, if `tint` is given, a background nudged
+/// toward that channel type's own color (the same color as its type-tag
+/// badge), so a long row of strips sorts into visual groups before you
+/// even read the labels.
+pub fn strip_panel(
+    selected: bool,
+    tint: Option<Color>,
+) -> impl Fn(&iced::Theme) -> container::Style {
     move |theme| {
         let base = panel(theme);
+        let base = match tint {
+            Some(t) => container::Style {
+                background: Some(Background::Color(blend(SURFACE, t, STRIP_TINT_AMOUNT))),
+                ..base
+            },
+            None => base,
+        };
         if selected {
             container::Style {
                 border: Border {
@@ -160,6 +194,12 @@ pub fn top_bar(_theme: &iced::Theme) -> container::Style {
 /// A small square toggle button (M / S / 48V / PAD) that lights up `active_color`
 /// when `active` — with a soft glow to sell the "lit" look — and responds to
 /// hover when inactive so it reads as clickable before you ever press it.
+/// How much a `Pressed` button's background darkens versus its resting
+/// `Hovered` look — the two used to render identically, so a click gave
+/// no tactile "it went down" feedback, just the same hover state held a
+/// little longer.
+const PRESS_DARKEN: f32 = 0.30;
+
 pub fn toggle_button(
     active: bool,
     active_color: Color,
@@ -169,14 +209,18 @@ pub fn toggle_button(
             status,
             button::Status::Hovered | button::Status::Pressed
         );
+        let pressed = matches!(status, button::Status::Pressed);
 
-        let background = if active {
+        let mut background = if active {
             active_color
         } else if hovered {
             SURFACE
         } else {
             BG_DEEP
         };
+        if pressed {
+            background = blend(background, Color::BLACK, PRESS_DARKEN);
+        }
         let border_color = if active {
             active_color
         } else if hovered {
@@ -187,11 +231,11 @@ pub fn toggle_button(
         let shadow = if active {
             Shadow {
                 color: Color {
-                    a: 0.45,
+                    a: if pressed { 0.25 } else { 0.45 },
                     ..active_color
                 },
                 offset: iced::Vector::new(0.0, 0.0),
-                blur_radius: 6.0,
+                blur_radius: if pressed { 3.0 } else { 6.0 },
             }
         } else {
             Shadow::default()
@@ -219,8 +263,19 @@ pub fn toggle_button(
 pub fn tab_toggle(active: bool) -> impl Fn(&iced::Theme, button::Status) -> button::Style {
     move |_theme, status| {
         let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+        let pressed = matches!(status, button::Status::Pressed);
         let background = if active {
-            ACCENT_DIM
+            if pressed {
+                blend(ACCENT_DIM, Color::BLACK, PRESS_DARKEN)
+            } else {
+                ACCENT_DIM
+            }
+        } else if pressed {
+            // The resting/hover states here are SURFACE/TRANSPARENT, and
+            // TRANSPARENT has nothing for `blend` toward black to darken —
+            // give the inactive tab its own distinct, visible press color
+            // instead of falling through to "looks like hover held longer."
+            Color { a: 0.35, ..ACCENT_DIM }
         } else if hovered {
             SURFACE
         } else {
@@ -241,6 +296,7 @@ pub fn tab_toggle(active: bool) -> impl Fn(&iced::Theme, button::Status) -> butt
 
 pub fn plain_button(_theme: &iced::Theme, status: button::Status) -> button::Style {
     let bg = match status {
+        button::Status::Pressed => blend(ACCENT_DIM, Color::BLACK, PRESS_DARKEN),
         button::Status::Hovered => ACCENT_DIM,
         _ => SURFACE,
     };

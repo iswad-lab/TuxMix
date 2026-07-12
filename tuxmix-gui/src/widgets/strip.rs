@@ -2,7 +2,7 @@
 //! dB readout (double-click to edit), pan readout.
 
 use iced::keyboard::Modifiers;
-use iced::widget::{button, column, container, mouse_area, row, text, text_input};
+use iced::widget::{button, column, container, mouse_area, row, text, text_input, tooltip};
 use iced::{Color, Element, Length};
 use std::time::Instant;
 use tuxmix_core::ChannelId;
@@ -94,6 +94,23 @@ fn centered_label<'a>(s: &'a str, size: f32) -> Element<'a, Message> {
     .into()
 }
 
+/// Wraps a control in a hover tooltip — for the abbreviations (M, S, 48V,
+/// PAD) that read as pro-audio jargon to anyone not already fluent in it.
+/// A short delay so it doesn't flash on every incidental mouse-over while
+/// moving across the strip toward something else.
+fn hint<'a>(content: impl Into<Element<'a, Message>>, label: &'a str, scale: f32) -> Element<'a, Message> {
+    tooltip(
+        content,
+        container(text(label).size(theme::TEXT_XS * scale).color(theme::TEXT_PRIMARY))
+            .padding(theme::SPACE_SM * scale)
+            .style(theme::panel),
+        tooltip::Position::Top,
+    )
+    .gap(4.0 * scale)
+    .delay(std::time::Duration::from_millis(400))
+    .into()
+}
+
 fn header_row<'a>(
     cid: ChannelId,
     name: &str,
@@ -103,15 +120,19 @@ fn header_row<'a>(
 ) -> Element<'a, Message> {
     // "-"/"+" rather than a chevron glyph — guaranteed to render on any
     // font, no risk of tofu boxes for a symbol the default sans might lack.
-    let collapse_btn = button(centered_label(
-        if collapsed { "+" } else { "-" },
-        theme::TEXT_SM * scale,
-    ))
-    .padding(0)
-    .width(18.0 * scale)
-    .height(16.0 * scale)
-    .style(theme::plain_button)
-    .on_press(Message::ToggleCollapse(cid));
+    let collapse_btn = hint(
+        button(centered_label(
+            if collapsed { "+" } else { "-" },
+            theme::TEXT_SM * scale,
+        ))
+        .padding(0)
+        .width(18.0 * scale)
+        .height(16.0 * scale)
+        .style(theme::plain_button)
+        .on_press(Message::ToggleCollapse(cid)),
+        if collapsed { "Expand" } else { "Collapse" },
+        scale,
+    );
 
     let mut header = row![text(short_label(name).to_string()).size(theme::TEXT_MD * scale)]
         .spacing(theme::SPACE_TIGHT);
@@ -144,7 +165,7 @@ fn collapsed_strip<'a>(p: StripParams<'a>, w: f32) -> Element<'a, Message> {
 
     mouse_area(
         container(rows)
-            .style(theme::strip_panel(p.selected))
+            .style(theme::strip_panel(p.selected, p.type_tag.map(|(_, c)| c)))
             .padding([theme::SPACE_SM * p.scale, theme::SPACE_MD * p.scale])
             .width(Length::Fixed(w * p.scale))
             .clip(true),
@@ -189,16 +210,24 @@ fn full_strip<'a>(p: StripParams<'a>, w: f32) -> Element<'a, Message> {
 
     let header = header_row(cid, &p.name, false, p.type_tag, scale);
 
-    let mute_btn = button(centered_label("M", theme::TEXT_SM * scale))
-        .width(Length::Fill)
-        .height(18.0 * scale)
-        .style(theme::toggle_button(p.mute, theme::MUTE_COLOR))
-        .on_press(Message::Mute(cid, !p.mute));
-    let solo_btn = button(centered_label("S", theme::TEXT_SM * scale))
-        .width(Length::Fill)
-        .height(18.0 * scale)
-        .style(theme::toggle_button(p.solo, theme::SOLO_COLOR))
-        .on_press(Message::Solo(cid, !p.solo));
+    let mute_btn = hint(
+        button(centered_label("M", theme::TEXT_SM * scale))
+            .width(Length::Fill)
+            .height(18.0 * scale)
+            .style(theme::toggle_button(p.mute, theme::MUTE_COLOR))
+            .on_press(Message::Mute(cid, !p.mute)),
+        "Mute",
+        scale,
+    );
+    let solo_btn = hint(
+        button(centered_label("S", theme::TEXT_SM * scale))
+            .width(Length::Fill)
+            .height(18.0 * scale)
+            .style(theme::toggle_button(p.solo, theme::SOLO_COLOR))
+            .on_press(Message::Solo(cid, !p.solo)),
+        "Solo",
+        scale,
+    );
     // Fixed-width buttons left dead space flanking them whenever the card
     // was sized for a wider sibling row (48V/PAD, or just a long channel
     // name) — filling the row makes every row use the card's full width
@@ -211,22 +240,26 @@ fn full_strip<'a>(p: StripParams<'a>, w: f32) -> Element<'a, Message> {
         if p.has_48v || p.has_pad {
             let mut tg_row = row![].spacing(theme::SPACE_TIGHT).width(Length::Fill);
             if p.has_48v {
-                tg_row = tg_row.push(
+                tg_row = tg_row.push(hint(
                     button(centered_label("48V", theme::TEXT_SM * scale))
                         .width(Length::Fill)
                         .height(18.0 * scale)
                         .style(theme::toggle_button(p.phantom, theme::PHANTOM))
                         .on_press(Message::Phantom(idx, !p.phantom)),
-                );
+                    "48V phantom power",
+                    scale,
+                ));
             }
             if p.has_pad {
-                tg_row = tg_row.push(
+                tg_row = tg_row.push(hint(
                     button(centered_label("PAD", theme::TEXT_SM * scale))
                         .width(Length::Fill)
                         .height(18.0 * scale)
                         .style(theme::toggle_button(p.pad, theme::ACCENT))
                         .on_press(Message::Pad(idx, !p.pad)),
-                );
+                    "-20 dB pad",
+                    scale,
+                ));
             }
             rows = rows.push(tg_row);
         }
@@ -311,7 +344,7 @@ fn full_strip<'a>(p: StripParams<'a>, w: f32) -> Element<'a, Message> {
             rows.width(Length::Fill)
                 .align_x(iced::Alignment::Center),
         )
-        .style(theme::strip_panel(p.selected))
+        .style(theme::strip_panel(p.selected, p.type_tag.map(|(_, c)| c)))
         .padding([theme::SPACE_SM * scale, theme::SPACE_MD * scale])
         .width(Length::Fixed(w * scale))
         .clip(true),

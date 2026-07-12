@@ -6,6 +6,6 @@ description = "GUI for TuxMix — direct control of RME hardware DSP mixers on L
 
 [dependencies]
 tuxmix-core = { path = "../tuxmix-core" }
-iced = { version = "0.14", features = ["canvas", "tokio"] }
+iced = { version = "0.14", features = ["canvas", "tokio", "advanced"] }
 log = "0.4"
 env_logger = "0.11"

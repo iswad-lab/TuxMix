@@ -1,6 +1,14 @@
 use iced::keyboard::{self, Key};
 use iced::widget::{column, container, mouse_area, pick_list, row, scrollable, text};
 use iced::{mouse, window, Element, Length, Subscription, Task};
+
+/// Identifies the mixer/matrix page's own vertical scrollable, so
+/// `Message::PageScrolled` can command it back to its pre-scroll position
+/// when a scroll event turns out to be a Ctrl+scroll-zoom gesture instead
+/// of an actual page scroll — see that handler for why.
+fn page_scroll_id() -> iced::advanced::widget::Id {
+    iced::advanced::widget::Id::new("page-scroll")
+}
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
@@ -189,6 +197,10 @@ pub enum Message {
     /// `handle_global_event`), not from a specific widget, so it fires
     /// consistently no matter what's under the cursor.
     ScrollZoom(mouse::ScrollDelta),
+    /// The page's own vertical scrollable just moved — including, unhelpfully,
+    /// when the movement was really a Ctrl+scroll-zoom gesture, since iced's
+    /// `Scrollable` has no way to ignore held modifiers. See the handler.
+    PageScrolled(scrollable::Viewport),
 
     Mute(ChannelId, bool),
     Solo(ChannelId, bool),
@@ -269,6 +281,11 @@ pub struct TuxMix {
     /// point (letting you grow/shrink a range interactively) the way
     /// Explorer/Finder do.
     pub select_anchor: Option<ChannelId>,
+    /// Last known-good scroll position of the page's vertical scrollable —
+    /// updated on every *plain* scroll, but deliberately not touched by a
+    /// Ctrl+scroll (zoom) event, so `Message::PageScrolled` has something
+    /// to snap back to when it detects one. See that handler.
+    pub scroll_offset: scrollable::AbsoluteOffset,
 }
 
 /// Matches the `Tick` subscription interval below — the release curve is
@@ -369,6 +386,7 @@ pub fn new(mock: bool) -> TuxMix {
         ui_scale: theme::SCALE_DEFAULT,
         selected: HashSet::new(),
         select_anchor: None,
+        scroll_offset: scrollable::AbsoluteOffset::default(),
     }
 }
 
@@ -543,6 +561,25 @@ pub fn update(state: &mut TuxMix, message: Message) -> Task<Message> {
                 state.ui_scale =
                     (state.ui_scale + dy * step).clamp(theme::SCALE_MIN, theme::SCALE_MAX);
             }
+        }
+        Message::PageScrolled(viewport) => {
+            if state.modifiers.control() {
+                // This scroll event is a Ctrl+scroll-zoom gesture, not a
+                // real page scroll — `ScrollZoom` (dispatched separately,
+                // from the global event stream) already applied the zoom.
+                // iced's `Scrollable` doesn't check modifiers before
+                // moving itself though, so it also shifted its own offset
+                // for this same wheel event; snap it back to where it was
+                // before, so Ctrl+scroll's only visible effect is the zoom.
+                return iced::advanced::widget::operate(
+                    iced::advanced::widget::operation::scrollable::scroll_to::<()>(
+                        page_scroll_id(),
+                        state.scroll_offset.into(),
+                    ),
+                )
+                .discard();
+            }
+            state.scroll_offset = viewport.absolute_offset();
         }
         Message::EscapePressed => {
             if state.editing.is_some() {
@@ -787,13 +824,17 @@ fn section_header(label: &str, scale: f32) -> Element<'_, Message> {
 /// would capture the wheel event locally before it could ever bubble up
 /// to this level. It's handled globally instead, in `handle_global_event`,
 /// which taps the raw event stream independent of what the widget tree
-/// did with it.
+/// did with it. `on_scroll`/`.id(...)` exist so `Message::PageScrolled` can
+/// undo the scrollable's own (modifier-blind) reaction to that same
+/// Ctrl+scroll event — see that handler.
 fn page<'a>(body: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
     mouse_area(
         container(
             scrollable(body)
                 .direction(scrollable::Direction::Vertical(theme::thin_scrollbar()))
                 .width(Length::Fill)
+                .id(page_scroll_id())
+                .on_scroll(Message::PageScrolled)
                 .style(theme::scrollable),
         )
         .style(theme::root)
