@@ -4,6 +4,7 @@
 use iced::keyboard::Modifiers;
 use iced::widget::{button, column, container, mouse_area, row, text, text_input};
 use iced::{Color, Element, Length};
+use std::time::Instant;
 use tuxmix_core::ChannelId;
 
 use crate::app::{db_text, short_label, Message};
@@ -14,13 +15,41 @@ use crate::widgets::fader::{fader, pan_indicator, vu_meter, Fader, MeterFrame, P
 /// in a strip is one of these times `StripParams::scale`, so the live UI
 /// zoom (Ctrl+=/Ctrl+-/Ctrl+0) resizes strips the same way it resizes text.
 const FADER_H: f32 = 168.0;
-const STRIP_W: f32 = 104.0;
+pub(crate) const STRIP_W: f32 = 104.0;
 /// Collapsed strips are a glance-only readout: name + VU meter, nothing
 /// else — no fader, no mute/solo, no pan. Trading away every control for
 /// space is the point; a strip you still need to touch shouldn't be
 /// collapsed. Width is set by the header (name + expand button), not the
 /// meter, which is narrower than that on its own.
-const COLLAPSED_W: f32 = 60.0;
+pub(crate) const COLLAPSED_W: f32 = 60.0;
+
+/// How long a strip's collapse/expand width transition takes — longer than
+/// the meter's 50ms interp window since this is a much bigger, structural
+/// change (the whole card growing or shrinking), not a small value nudge.
+/// Same linear ease-style interpolation as `fader::MeterFrame`, just a
+/// dedicated type since the duration and the thing being interpolated
+/// (a pixel width, not a volume/pan value) are both different.
+const COLLAPSE_INTERP_MS: f32 = 160.0;
+
+#[derive(Clone, Copy, Debug)]
+pub struct CollapseAnim {
+    pub prev: f32,
+    pub value: f32,
+    pub since: Instant,
+}
+
+impl CollapseAnim {
+    pub fn at(&self, now: Instant) -> f32 {
+        let t = (now.duration_since(self.since).as_secs_f32() * 1000.0 / COLLAPSE_INTERP_MS)
+            .clamp(0.0, 1.0);
+        self.prev + (self.value - self.prev) * t
+    }
+
+    pub fn is_settling(&self, now: Instant) -> bool {
+        (self.value - self.prev).abs() > f32::EPSILON
+            && now.duration_since(self.since).as_secs_f32() * 1000.0 < COLLAPSE_INTERP_MS
+    }
+}
 
 pub struct StripParams<'a> {
     pub cid: ChannelId,
@@ -42,6 +71,7 @@ pub struct StripParams<'a> {
     pub drag_range: Option<(f32, f32)>,
     pub modifiers: Modifiers,
     pub collapsed: bool,
+    pub collapse_anim: Option<CollapseAnim>,
     pub scale: f32,
     pub selected: bool,
 }
@@ -100,7 +130,10 @@ fn header_row<'a>(
 
 /// A collapsed strip is a glance-only readout — trading every control away
 /// (fader, mute/solo, pan) is the point of collapsing it, not a side effect.
-fn collapsed_strip<'a>(p: StripParams<'a>) -> Element<'a, Message> {
+/// Only ever rendered fully settled (see `strip()`'s dispatch), so `w` is
+/// always `COLLAPSED_W`, but it's threaded through rather than hardcoded to
+/// keep this in lockstep with `full_strip`'s signature.
+fn collapsed_strip<'a>(p: StripParams<'a>, w: f32) -> Element<'a, Message> {
     let rows = column![
         header_row(p.cid, &p.name, true, p.type_tag, p.scale),
         vu_meter(p.meter, FADER_H * p.scale, p.scale),
@@ -113,18 +146,43 @@ fn collapsed_strip<'a>(p: StripParams<'a>) -> Element<'a, Message> {
         container(rows)
             .style(theme::strip_panel(p.selected))
             .padding([theme::SPACE_SM * p.scale, theme::SPACE_MD * p.scale])
-            .width(Length::Fixed(COLLAPSED_W * p.scale)),
+            .width(Length::Fixed(w * p.scale))
+            .clip(true),
     )
     .on_press(Message::StripClicked(p.cid))
     .on_double_click(Message::ToggleCollapse(p.cid))
     .into()
 }
 
+/// Picks between the two strip layouts and, while a collapse/expand
+/// animation is in flight, the width the outer card should be drawn at
+/// this frame. The full (uncollapsed) content is shown not just when
+/// resting expanded but for the whole transition in *either* direction —
+/// shrinking, it's the thing visibly getting clipped down to
+/// `COLLAPSED_W`; growing, it's what's being revealed. Only once a
+/// collapse has fully settled does rendering switch to the lighter,
+/// control-free `collapsed_strip`.
 pub fn strip<'a>(p: StripParams<'a>) -> Element<'a, Message> {
-    if p.collapsed {
-        return collapsed_strip(p);
-    }
+    let now = Instant::now();
+    let (w, show_full) = match &p.collapse_anim {
+        Some(a) => (a.at(now), a.is_settling(now) || !p.collapsed),
+        None => {
+            if p.collapsed {
+                (COLLAPSED_W, false)
+            } else {
+                (STRIP_W, true)
+            }
+        }
+    };
 
+    if show_full {
+        full_strip(p, w)
+    } else {
+        collapsed_strip(p, w)
+    }
+}
+
+fn full_strip<'a>(p: StripParams<'a>, w: f32) -> Element<'a, Message> {
     let cid = p.cid;
     let out = p.output_idx;
     let scale = p.scale;
@@ -231,7 +289,7 @@ pub fn strip<'a>(p: StripParams<'a>) -> Element<'a, Message> {
                     modifiers: p.modifiers,
                     scale,
                     on_change: Box::new(move |pan| Message::PanChanged(cid, out, pan)),
-                    on_reset: Box::new(move || Message::PanChanged(cid, out, 0)),
+                    on_reset: Box::new(move || Message::PanReset(cid, out)),
                 }),
                 text(pan_str).color(theme::TEXT_SEC).size(theme::TEXT_XS * scale),
             ]
@@ -255,9 +313,50 @@ pub fn strip<'a>(p: StripParams<'a>) -> Element<'a, Message> {
         )
         .style(theme::strip_panel(p.selected))
         .padding([theme::SPACE_SM * scale, theme::SPACE_MD * scale])
-        .width(Length::Fixed(STRIP_W * scale)),
+        .width(Length::Fixed(w * scale))
+        .clip(true),
     )
     .on_press(Message::StripClicked(cid))
     .on_double_click(Message::ToggleCollapse(cid))
     .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn settled_anim_is_never_settling() {
+        let a = CollapseAnim { prev: STRIP_W, value: STRIP_W, since: Instant::now() };
+        assert!(!a.is_settling(a.since));
+        assert!(!a.is_settling(a.since + Duration::from_millis(10)));
+    }
+
+    #[test]
+    fn transitioning_anim_settles_after_the_interp_window() {
+        let a = CollapseAnim { prev: STRIP_W, value: COLLAPSED_W, since: Instant::now() };
+        assert!(a.is_settling(a.since), "just started — should still be settling");
+        assert!(
+            a.is_settling(a.since + Duration::from_millis(80)),
+            "mid-transition — should still be settling"
+        );
+        assert!(
+            !a.is_settling(a.since + Duration::from_millis(200)),
+            "past the interp window — should have stopped requesting redraws"
+        );
+    }
+
+    #[test]
+    fn at_interpolates_linearly_from_prev_to_value() {
+        let a = CollapseAnim { prev: STRIP_W, value: COLLAPSED_W, since: Instant::now() };
+        assert_eq!(a.at(a.since), STRIP_W);
+        assert_eq!(a.at(a.since + Duration::from_millis(160)), COLLAPSED_W);
+        let mid = a.at(a.since + Duration::from_millis(80));
+        let expected_mid = (STRIP_W + COLLAPSED_W) / 2.0;
+        assert!(
+            (mid - expected_mid).abs() < 0.5,
+            "expected ~{expected_mid} at the midpoint, got {mid}"
+        );
+    }
 }

@@ -175,10 +175,11 @@ pub enum Message {
     ScaleUp,
     ScaleDown,
     ScaleReset,
-    /// Ctrl+scroll over empty background (no strip, fader, or scrollable
-    /// underneath — those already use their own scroll for something
-    /// else) zooms the whole interface, same as Ctrl+=/Ctrl+-.
-    BackgroundScroll(mouse::ScrollDelta),
+    /// Ctrl+scroll, anywhere in the window, zooms the whole interface —
+    /// same as Ctrl+=/Ctrl+-. Dispatched from the global event stream (see
+    /// `handle_global_event`), not from a specific widget, so it fires
+    /// consistently no matter what's under the cursor.
+    ScrollZoom(mouse::ScrollDelta),
 
     Mute(ChannelId, bool),
     Solo(ChannelId, bool),
@@ -191,7 +192,13 @@ pub enum Message {
     Reset(ChannelId, usize, f32),
 
     PanChanged(ChannelId, usize, i8),
+    PanReset(ChannelId, usize),
     ToggleCollapse(ChannelId),
+    /// Fires only while `collapse_anim` is non-empty (see `subscription`) —
+    /// exists purely to trigger a redraw at a much higher rate than the
+    /// normal 50ms `Tick` so the width tween looks smooth, and to prune
+    /// entries once they've settled so that faster timer can shut off.
+    CollapseTick,
 
     EditStart(ChannelId, String),
     EditChanged(String),
@@ -229,16 +236,30 @@ pub struct TuxMix {
     pub input_meters: Vec<MeterAnim>,
     pub playback_meters: Vec<MeterAnim>,
     /// Strips the user has collapsed to save horizontal space — presence in
-    /// the set means collapsed.
+    /// the set means collapsed. This is the *target* state; the strip may
+    /// still be mid-transition, tracked separately in `collapse_anim`.
     pub collapsed: HashSet<ChannelId>,
+    /// In-flight collapse/expand width animations, keyed by strip — only
+    /// holds an entry while a strip is actually transitioning; pruned once
+    /// settled (see `Message::CollapseTick`), which also lets the extra
+    /// high-frequency redraw timer in `subscription()` shut itself off.
+    pub collapse_anim: HashMap<ChannelId, strip::CollapseAnim>,
     /// Live UI zoom (Ctrl+=/Ctrl+-/Ctrl+0), multiplied into every text size
     /// and widget dimension in the mixer/matrix views. `theme::SCALE_*`
     /// constants define the default/step/bounds.
     pub ui_scale: f32,
-    /// Multi-selected strips (Ctrl/Shift+click to toggle membership,
-    /// click empty background to clear) — mute/solo/collapse applied to
-    /// any selected strip apply to the whole selection at once.
+    /// Multi-selected strips — Ctrl+click toggles just the clicked strip,
+    /// Shift+click selects the whole range from `select_anchor` (standard
+    /// file-manager convention), click empty background to clear.
+    /// Mute/solo/collapse/volume/pan applied to any selected strip apply
+    /// to the whole selection at once.
     pub selected: HashSet<ChannelId>,
+    /// The strip a future Shift+click's range is measured from — the
+    /// most recent strip explicitly Ctrl- or Shift-clicked. Not moved by
+    /// Shift+click itself, so repeated Shift+clicks pivot around the same
+    /// point (letting you grow/shrink a range interactively) the way
+    /// Explorer/Finder do.
+    pub select_anchor: Option<ChannelId>,
 }
 
 /// Matches the `Tick` subscription interval below — the release curve is
@@ -335,8 +356,10 @@ pub fn new(mock: bool) -> TuxMix {
         input_meters: vec![MeterAnim::new(); n_inputs],
         playback_meters: vec![MeterAnim::new(); n_playbacks],
         collapsed: HashSet::new(),
+        collapse_anim: HashMap::new(),
         ui_scale: theme::SCALE_DEFAULT,
         selected: HashSet::new(),
+        select_anchor: None,
     }
 }
 
@@ -367,6 +390,20 @@ fn db_to_vol(db: f32) -> f32 {
     } else {
         10f32.powf(db / 20.0)
     }
+}
+
+/// Every selectable channel, in the same order they're laid out on
+/// screen (Hardware Inputs, then Software Playback, then Hardware
+/// Outputs, each in index order) — the linear ordering Shift+click range
+/// selection is measured against, so a range visually spans exactly the
+/// strips between two clicks the way it would in a file manager.
+fn channel_order(state: &TuxMix) -> Vec<ChannelId> {
+    let d = &state.device;
+    (0..d.inputs().len())
+        .map(ChannelId::Input)
+        .chain((0..d.playbacks().len()).map(ChannelId::Playback))
+        .chain((0..d.outputs().len()).map(ChannelId::Output))
+        .collect()
 }
 
 /// Sets `cid`'s volume to `v`. If `cid` is part of an active multi-selection,
@@ -406,6 +443,37 @@ fn apply_grouped_pan(state: &mut TuxMix, cid: ChannelId, out: usize, pan: i8) {
         }
     } else {
         let _ = state.device.set_pan(cid, out, pan);
+    }
+}
+
+/// Flips `cid`'s collapsed/expanded target and kicks off (or redirects, if
+/// one was already in flight — e.g. double-clicking again before it
+/// settles) the width animation that plays it out. A no-op if `cid` is
+/// already at `target`, so re-applying the same target to a whole
+/// selection doesn't restart every strip's animation from scratch.
+fn set_collapsed(state: &mut TuxMix, cid: ChannelId, target: bool) {
+    if state.collapsed.contains(&cid) == target {
+        return;
+    }
+    let now = Instant::now();
+    let current_w = state
+        .collapse_anim
+        .get(&cid)
+        .map(|a| a.at(now))
+        .unwrap_or(if state.collapsed.contains(&cid) {
+            strip::COLLAPSED_W
+        } else {
+            strip::STRIP_W
+        });
+    let target_w = if target { strip::COLLAPSED_W } else { strip::STRIP_W };
+    state.collapse_anim.insert(
+        cid,
+        strip::CollapseAnim { prev: current_w, value: target_w, since: now },
+    );
+    if target {
+        state.collapsed.insert(cid);
+    } else {
+        state.collapsed.remove(&cid);
     }
 }
 
@@ -453,7 +521,7 @@ pub fn update(state: &mut TuxMix, message: Message) -> Task<Message> {
             state.ui_scale = (state.ui_scale - theme::SCALE_STEP).max(theme::SCALE_MIN);
         }
         Message::ScaleReset => state.ui_scale = theme::SCALE_DEFAULT,
-        Message::BackgroundScroll(delta) => {
+        Message::ScrollZoom(delta) => {
             if state.modifiers.control() {
                 // Same 20:1 ratio as the fader's own wheel handling — a
                 // wheel "line" is one discrete detent, a trackpad "pixel"
@@ -511,7 +579,16 @@ pub fn update(state: &mut TuxMix, message: Message) -> Task<Message> {
             }
         }
         Message::Reset(cid, out, default_vol) => {
-            let _ = state.device.set_volume(cid, out, default_vol);
+            if state.selected.len() > 1 && state.selected.contains(&cid) {
+                // Reset means "back to default" for the whole group, not a
+                // relative move — every selected fader snaps to the same
+                // absolute value, unlike a drag which preserves balance.
+                for sel in state.selected.clone() {
+                    let _ = state.device.set_volume(sel, out, default_vol);
+                }
+            } else {
+                let _ = state.device.set_volume(cid, out, default_vol);
+            }
             if state.drag_range.is_some_and(|(dc, _, _)| dc == cid) {
                 state.drag_range = None;
             }
@@ -519,33 +596,65 @@ pub fn update(state: &mut TuxMix, message: Message) -> Task<Message> {
         Message::PanChanged(cid, out, pan) => {
             apply_grouped_pan(state, cid, out, pan);
         }
+        Message::PanReset(cid, out) => {
+            if state.selected.len() > 1 && state.selected.contains(&cid) {
+                for sel in state.selected.clone() {
+                    let _ = state.device.set_pan(sel, out, 0);
+                }
+            } else {
+                let _ = state.device.set_pan(cid, out, 0);
+            }
+        }
         Message::ToggleCollapse(cid) => {
+            let target = !state.collapsed.contains(&cid);
             if state.selected.len() > 1 && state.selected.contains(&cid) {
                 // Uniform target for the whole group — the opposite of
                 // what the clicked strip currently is — rather than each
                 // toggling its own state independently, which would leave
                 // them out of sync with each other.
-                let target = !state.collapsed.contains(&cid);
                 for sel in state.selected.clone() {
-                    if target {
-                        state.collapsed.insert(sel);
-                    } else {
-                        state.collapsed.remove(&sel);
-                    }
+                    set_collapsed(state, sel, target);
                 }
-            } else if !state.collapsed.remove(&cid) {
-                state.collapsed.insert(cid);
+            } else {
+                set_collapsed(state, cid, target);
             }
         }
+        Message::CollapseTick => {
+            let now = Instant::now();
+            state.collapse_anim.retain(|_, a| a.is_settling(now));
+        }
         Message::StripClicked(cid) => {
-            if state.modifiers.control() || state.modifiers.shift() {
+            if state.modifiers.control() {
+                // Toggle just this one strip, leaving the rest of the
+                // selection untouched — the standard Ctrl+click
+                // convention. Becomes the pivot for the next Shift+click.
                 if !state.selected.remove(&cid) {
                     state.selected.insert(cid);
+                }
+                state.select_anchor = Some(cid);
+            } else if state.modifiers.shift() {
+                // Select the whole visual range from the anchor through
+                // cid, replacing the current selection — the standard
+                // Shift+click convention. Doesn't move the anchor, so a
+                // second Shift+click elsewhere re-measures from the same
+                // start rather than the last endpoint.
+                let order = channel_order(state);
+                let anchor = state.select_anchor.unwrap_or(cid);
+                if let (Some(from), Some(to)) = (
+                    order.iter().position(|&c| c == anchor),
+                    order.iter().position(|&c| c == cid),
+                ) {
+                    let (lo, hi) = (from.min(to), from.max(to));
+                    state.selected = order[lo..=hi].iter().copied().collect();
+                }
+                if state.select_anchor.is_none() {
+                    state.select_anchor = Some(cid);
                 }
             }
         }
         Message::ClearSelection => {
             state.selected.clear();
+            state.select_anchor = None;
         }
         Message::EditStart(cid, buf) => {
             state.editing = Some(cid);
@@ -564,11 +673,20 @@ pub fn update(state: &mut TuxMix, message: Message) -> Task<Message> {
     Task::none()
 }
 
-pub fn subscription(_state: &TuxMix) -> Subscription<Message> {
-    Subscription::batch([
+pub fn subscription(state: &TuxMix) -> Subscription<Message> {
+    let mut subs = vec![
         iced::time::every(Duration::from_millis(50)).map(|_| Message::Tick),
         iced::event::listen_with(handle_global_event),
-    ])
+    ];
+    // Only running while a collapse/expand transition is actually in
+    // flight — plain `column`/`container` widgets can't self-request a
+    // redraw the way the canvas-based fader/meter animations do, so a
+    // much faster timer stands in for that during the ~160ms transition,
+    // then switches itself back off once `collapse_anim` empties out.
+    if !state.collapse_anim.is_empty() {
+        subs.push(iced::time::every(Duration::from_millis(8)).map(|_| Message::CollapseTick));
+    }
+    Subscription::batch(subs)
 }
 
 fn handle_global_event(
@@ -598,6 +716,18 @@ fn handle_global_event(
         }
         iced::Event::Keyboard(keyboard::Event::ModifiersChanged(m)) => {
             Some(Message::ModifiersChanged(m))
+        }
+        // Broadcast via the global event stream (not routed through the
+        // widget tree), so Ctrl+scroll-to-zoom fires no matter what's
+        // under the cursor — a fader, a horizontally-scrollable strip
+        // row, or the page's own vertical scrollable all capture wheel
+        // events locally for their own purpose first, which would
+        // otherwise swallow the gesture before it could ever reach a
+        // widget-tree handler placed on the background. `ScrollZoom`
+        // itself still gates on Ctrl being held, so a plain scroll here
+        // is a no-op — local widgets keep handling those normally.
+        iced::Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
+            Some(Message::ScrollZoom(delta))
         }
         _ => None,
     }
@@ -641,20 +771,27 @@ fn section_header(label: &str, scale: f32) -> Element<'_, Message> {
     .into()
 }
 
-/// Wraps a view's body in the root background, filling the window, with
-/// Ctrl+scroll-to-zoom over whatever empty space is left — a fader, pan
-/// control, or scrollable strip row underneath already captures the wheel
-/// event for its own purpose first, so this only ever fires over genuinely
-/// empty background.
+/// Wraps a view's body in the root background, filling the window, with a
+/// vertical scrollbar for when the stacked sections (or the matrix grid)
+/// don't fit the window height. Ctrl+scroll-to-zoom is *not* wired up here
+/// — the vertical scrollable (and any strip row, fader, etc. inside it)
+/// would capture the wheel event locally before it could ever bubble up
+/// to this level. It's handled globally instead, in `handle_global_event`,
+/// which taps the raw event stream independent of what the widget tree
+/// did with it.
 fn page<'a>(body: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
     mouse_area(
-        container(body)
-            .style(theme::root)
-            .padding([theme::SPACE_LG, theme::SPACE_XL])
-            .width(Length::Fill)
-            .height(Length::Fill),
+        container(
+            scrollable(body)
+                .direction(scrollable::Direction::Vertical(theme::thin_scrollbar()))
+                .width(Length::Fill)
+                .style(theme::scrollable),
+        )
+        .style(theme::root)
+        .padding([theme::SPACE_LG, theme::SPACE_XL])
+        .width(Length::Fill)
+        .height(Length::Fill),
     )
-    .on_scroll(Message::BackgroundScroll)
     .on_press(Message::ClearSelection)
     .into()
 }
@@ -842,6 +979,7 @@ fn mixer_view(state: &TuxMix) -> Element<'_, Message> {
             drag_range,
             modifiers: state.modifiers,
             collapsed: state.collapsed.contains(&cid),
+            collapse_anim: state.collapse_anim.get(&cid).copied(),
             scale: state.ui_scale,
             selected: state.selected.contains(&cid),
         }));
@@ -879,6 +1017,7 @@ fn mixer_view(state: &TuxMix) -> Element<'_, Message> {
             drag_range,
             modifiers: state.modifiers,
             collapsed: state.collapsed.contains(&cid),
+            collapse_anim: state.collapse_anim.get(&cid).copied(),
             scale: state.ui_scale,
             selected: state.selected.contains(&cid),
         }));
@@ -911,6 +1050,7 @@ fn mixer_view(state: &TuxMix) -> Element<'_, Message> {
             drag_range,
             modifiers: state.modifiers,
             collapsed: state.collapsed.contains(&cid),
+            collapse_anim: state.collapse_anim.get(&cid).copied(),
             scale: state.ui_scale,
             selected: state.selected.contains(&cid),
         }));
@@ -943,7 +1083,8 @@ fn mixer_view(state: &TuxMix) -> Element<'_, Message> {
             ))
             .style(theme::scrollable),
     ]
-    .spacing(theme::SPACE_LG);
+    .spacing(theme::SPACE_LG)
+    .width(Length::Fill);
 
     page(body)
 }
@@ -957,7 +1098,8 @@ fn matrix_view(state: &TuxMix) -> Element<'_, Message> {
             .size(theme::TEXT_XS * scale),
         matrix::view(state),
     ]
-    .spacing(theme::SPACE_LG);
+    .spacing(theme::SPACE_LG)
+    .width(Length::Fill);
 
     page(body)
 }

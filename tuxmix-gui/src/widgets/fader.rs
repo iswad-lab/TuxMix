@@ -86,7 +86,7 @@ const FINE_SENSITIVITY: f32 = 0.15;
 /// center (since the accumulator is re-seeded at the snapped value each
 /// time), so leaving it takes a deliberate move past the edge rather
 /// than the value drifting off by a pixel.
-const SNAP_PX: f32 = 5.0;
+const SNAP_PX: f32 = 2.0;
 
 /// Fader travel is dB-tapered (like real hardware / TotalMix), not linear
 /// amplitude — a power curve (t = 1 - x^K, x = db/FLOOR_DB) gives generous
@@ -273,6 +273,13 @@ impl<Message> canvas::Program<Message> for Fader<Message> {
                 if !cursor.is_over(bounds) {
                     return None;
                 }
+                // Ctrl+scroll is reserved for whole-interface zoom (see
+                // `Message::ScrollZoom`), handled globally regardless of
+                // what's under the cursor — leave it uncaptured here so
+                // this fader doesn't *also* move at the same time.
+                if self.modifiers.control() {
+                    return None;
+                }
                 // Lines are discrete wheel detents (dy is usually ±1 per
                 // click); Pixels are a continuous trackpad/high-res stream
                 // (many small events per gesture) — they need very
@@ -289,13 +296,7 @@ impl<Message> canvas::Program<Message> for Fader<Message> {
                 if dy == 0.0 {
                     return None;
                 }
-                let mult = if self.modifiers.shift() {
-                    0.25
-                } else if self.modifiers.control() {
-                    3.0
-                } else {
-                    1.0
-                };
+                let mult = if self.modifiers.shift() { 0.25 } else { 1.0 };
                 let now = Instant::now();
                 let fresh_gesture = state
                     .last_scroll
@@ -572,14 +573,6 @@ fn draw_track(
     let cap_left = cx - cap_w / 2.0;
     let cap_top = cap_y - half_cap;
 
-    if dragging {
-        let glow = Path::rectangle(
-            Point::new(cap_left - 3.0 * scale, cap_top - 3.0 * scale),
-            Size::new(cap_w + 6.0 * scale, cap_h + 6.0 * scale),
-        );
-        frame.fill(&glow, Color { a: 0.18, ..theme::FADER });
-    }
-
     let body = Path::new(|b| {
         b.rounded_rectangle(
             Point::new(cap_left, cap_top),
@@ -837,6 +830,11 @@ impl<Message> canvas::Program<Message> for PanIndicator<Message> {
                 if !cursor.is_over(bounds) {
                     return None;
                 }
+                // See Fader::update's identical arm — Ctrl+scroll is
+                // reserved for whole-interface zoom.
+                if self.modifiers.control() {
+                    return None;
+                }
                 let (dy, base_step) = match delta {
                     mouse::ScrollDelta::Lines { y, .. } => (*y, 0.03),
                     mouse::ScrollDelta::Pixels { y, .. } => (*y, 0.0015),
@@ -844,13 +842,7 @@ impl<Message> canvas::Program<Message> for PanIndicator<Message> {
                 if dy == 0.0 {
                     return None;
                 }
-                let mult = if self.modifiers.shift() {
-                    0.25
-                } else if self.modifiers.control() {
-                    3.0
-                } else {
-                    1.0
-                };
+                let mult = if self.modifiers.shift() { 0.25 } else { 1.0 };
                 let now = Instant::now();
                 let fresh_gesture = state
                     .last_scroll
