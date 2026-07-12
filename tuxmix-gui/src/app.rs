@@ -16,8 +16,17 @@ use crate::widgets::strip;
 
 pub const OUT_LABELS: [&str; 6] = ["AN1/2", "PH3/4", "AS1/2", "A3/A4", "A5/A6", "A7/A8"];
 
+/// Strips redundant prefixes baked into a channel's stored name before it's
+/// shown in a strip header — "PCM " for playback channels, "OUT " for
+/// output bus pairs (`profile.rs`'s `format!("OUT {}", pair.left)`). Both
+/// are already conveyed by the strip's own type tag badge right next to
+/// the name, so keeping them in the text just wastes width for no extra
+/// information — on an output like "OUT ADAT3" that was enough to push the
+/// collapse button (`header_row`) almost entirely off the card.
 pub fn short_label(name: &str) -> &str {
-    name.strip_prefix("PCM ").unwrap_or(name)
+    name.strip_prefix("PCM ")
+        .or_else(|| name.strip_prefix("OUT "))
+        .unwrap_or(name)
 }
 
 pub fn type_tag(t: ChannelType) -> (&'static str, iced::Color) {

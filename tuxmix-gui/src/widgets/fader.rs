@@ -210,6 +210,18 @@ impl<Message> canvas::Program<Message> for Fader<Message> {
         match event {
             canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 let pos = cursor.position_over(bounds)?;
+                // The meter/ruler column shares this canvas with the track
+                // but is a read-only VU display, not part of the control
+                // surface — a press has to land on the track side (past
+                // the midpoint of the gap between them) to start a drag or
+                // count as a reset click. `pos` is in the same (parent/
+                // absolute) space as `bounds`, same as `locate`'s use of
+                // `bounds.y` below — `track_x()` is a widget-local offset,
+                // so it has to go through `bounds.x` too, or this only
+                // happens to work for a strip sitting at window x ≈ 0.
+                if pos.x - bounds.x < self.track_x() - (GAP / 2.0) * self.scale {
+                    return None;
+                }
                 let now = Instant::now();
                 let is_double = state
                     .last_click
@@ -392,11 +404,16 @@ impl<Message> canvas::Program<Message> for Fader<Message> {
         cursor: mouse::Cursor,
     ) -> mouse::Interaction {
         if state.dragging {
-            mouse::Interaction::Grabbing
-        } else if cursor.is_over(bounds) {
-            mouse::Interaction::Grab
-        } else {
-            mouse::Interaction::Idle
+            return mouse::Interaction::Grabbing;
+        }
+        // Same track-only boundary as the press handler above — a grab
+        // cursor over the read-only meter would advertise a drag that
+        // doesn't actually happen.
+        match cursor.position_over(bounds) {
+            Some(pos) if pos.x - bounds.x >= self.track_x() - (GAP / 2.0) * self.scale => {
+                mouse::Interaction::Grab
+            }
+            _ => mouse::Interaction::Idle,
         }
     }
 }
