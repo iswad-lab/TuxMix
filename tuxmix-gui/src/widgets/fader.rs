@@ -147,6 +147,19 @@ impl<Message> Fader<Message> {
             0.0
         }
     }
+
+    /// True if `pos_x` — in the same (parent/absolute) coordinate space as
+    /// the `bounds` a `canvas::Program` method receives, hence `bounds_x`
+    /// to normalize it — falls on the track side of the meter/track gap.
+    /// The meter/ruler column is a read-only VU display, not part of the
+    /// control surface, even though it shares this canvas with the track.
+    /// Every input handler that cares where on the canvas the cursor is
+    /// (press, wheel, the grab cursor) goes through this one spot instead
+    /// of repeating the boundary math, so a future change to the layout
+    /// constants can't leave one of them checking a stale boundary.
+    fn is_over_track(&self, pos_x: f32, bounds_x: f32) -> bool {
+        pos_x - bounds_x >= self.track_x() - (GAP / 2.0) * self.scale
+    }
 }
 
 #[derive(Default)]
@@ -210,16 +223,7 @@ impl<Message> canvas::Program<Message> for Fader<Message> {
         match event {
             canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 let pos = cursor.position_over(bounds)?;
-                // The meter/ruler column shares this canvas with the track
-                // but is a read-only VU display, not part of the control
-                // surface — a press has to land on the track side (past
-                // the midpoint of the gap between them) to start a drag or
-                // count as a reset click. `pos` is in the same (parent/
-                // absolute) space as `bounds`, same as `locate`'s use of
-                // `bounds.y` below — `track_x()` is a widget-local offset,
-                // so it has to go through `bounds.x` too, or this only
-                // happens to work for a strip sitting at window x ≈ 0.
-                if pos.x - bounds.x < self.track_x() - (GAP / 2.0) * self.scale {
+                if !self.is_over_track(pos.x, bounds.x) {
                     return None;
                 }
                 let now = Instant::now();
@@ -282,7 +286,10 @@ impl<Message> canvas::Program<Message> for Fader<Message> {
                 Some(canvas::Action::publish((self.on_release)()).and_capture())
             }
             canvas::Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
-                if !cursor.is_over(bounds) {
+                let Some(pos) = cursor.position_over(bounds) else {
+                    return None;
+                };
+                if !self.is_over_track(pos.x, bounds.x) {
                     return None;
                 }
                 // Ctrl+scroll is reserved for whole-interface zoom (see
@@ -406,13 +413,8 @@ impl<Message> canvas::Program<Message> for Fader<Message> {
         if state.dragging {
             return mouse::Interaction::Grabbing;
         }
-        // Same track-only boundary as the press handler above — a grab
-        // cursor over the read-only meter would advertise a drag that
-        // doesn't actually happen.
         match cursor.position_over(bounds) {
-            Some(pos) if pos.x - bounds.x >= self.track_x() - (GAP / 2.0) * self.scale => {
-                mouse::Interaction::Grab
-            }
+            Some(pos) if self.is_over_track(pos.x, bounds.x) => mouse::Interaction::Grab,
             _ => mouse::Interaction::Idle,
         }
     }
