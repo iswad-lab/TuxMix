@@ -48,14 +48,17 @@ TuxMix is the answer.
 | ✅ PAD | Done |
 | ✅ Sensitivity (Lo Gain / +4dBu) | Done |
 | ✅ Input & playback channel strips | Done |
+| ✅ Animated VU meters (144Hz-smooth, ballistics-shaped) | Done |
 | ✅ Matrix mixer view (submixes) | Done |
-| ✅ Scene capture / save / restore (JSON) | Done |
+| ✅ Scene capture / save / restore (JSON), with device-model safety check | Done |
+| ✅ Multi-select (Ctrl/Shift+click) with grouped mute/solo/collapse/volume/pan | Done |
+| ✅ Collapsible strips, live UI zoom (Ctrl+=/Ctrl+-/Ctrl+0) | Done |
+| ✅ Multi-device-ready core (`DeviceProfile`) — see [Supported hardware](#supported-hardware) | Done |
 | ✅ Simulated mode (`--mock` for dev without hardware) | Done |
 | ✅ Desktop GUI (iced) | Done |
 | ✅ Terminal TUI (ratatui) | Done |
-| ⏳ VU meters (needs USB RE) | Planned |
 | ⏳ Loopback control | Planned |
-| ⏳ AUR package | Done |
+| ⏳ AUR package | PKGBUILD written, not yet published — see [Release status](#release-status) |
 
 ---
 
@@ -81,9 +84,9 @@ The mock simulates all 12 inputs, 12 playbacks, animated VU meters, and all cont
 
 ### From AUR (Arch Linux)
 
-```bash
-yay -S tuxmix
-```
+Not published yet — see [Release status](#release-status). A `PKGBUILD`
+already lives in `aur/tuxmix/` and will go up once the first tagged
+release exists; until then, build from source (below).
 
 ---
 
@@ -93,7 +96,9 @@ yay -S tuxmix
 TuxMix/
 ├── tuxmix-core/     Hardware-agnostic RME control library (Rust + ALSA)
 │   ├── device.rs      RmeDevice trait — add support for any RME interface
-│   ├── babyface.rs    Babyface Pro FS implementation
+│   ├── profile.rs      DeviceProfile — declarative per-model channel topology
+│   ├── profiles/        One const DeviceProfile per supported model
+│   ├── babyface.rs    Babyface Pro FS implementation (consumes a DeviceProfile)
 │   ├── mock.rs        Simulated device for development & CI
 │   ├── channel.rs     Input & playback channel model (per-output volumes)
 │   ├── mixer.rs       ALSA mixer wrapper
@@ -102,7 +107,18 @@ TuxMix/
 └── tuxmix-gui/      Desktop GUI (iced)
 ```
 
-The core library exposes a clean `RmeDevice` trait. Adding support for a new RME interface is as simple as implementing the trait with the right ALSA control mapping.
+The core library exposes a clean `RmeDevice` trait, and ALSA-selem devices
+(the Babyface family and similar USB class-compliant interfaces) plug into
+it via a `DeviceProfile` — a data description of a model's channel layout,
+not hand-written per-device code. Adding support for a new ALSA-selem RME
+interface means writing one `DeviceProfile` and verifying its ALSA control
+names against real `amixer scontents` output — see
+[Contributing](CONTRIBUTING.md).
+
+RME's newer "TotalMix FX 2"-generation interfaces (Fireface UCX II, UFX+/
+III) don't expose ALSA elements at all — they speak a proprietary MIDI
+SysEx protocol instead, which needs a different I/O backend entirely. Not
+implemented yet; tracked as a distinct, larger phase.
 
 ---
 
@@ -110,13 +126,29 @@ The core library exposes a clean `RmeDevice` trait. Adding support for a new RME
 
 | Model | Status |
 |---|---|
-| **Babyface Pro FS** | 🟡 In progress (primary target) |
-| Babyface Pro | 🟢 Planned |
-| Fireface UCX II | 🟢 Planned |
-| Fireface UFX+ | 🟢 Planned |
-| MADIface Pro | 🟢 Planned |
-| Fireface UFX II / III | 🟢 Planned |
-| Any RME interface via trait impl | 🟢 Possible |
+| **Babyface Pro FS** | 🟡 ALSA mapping written (`babyface.rs`), not yet verified against real hardware — see [Release status](#release-status) |
+| Babyface Pro | 🟢 Planned (same `DeviceProfile` family, needs a real-device owner to verify `amixer scontents` output) |
+| Fireface UCX II | 🔵 Needs the MIDI SysEx backend (not started) |
+| Fireface UFX+ | 🔵 Needs the MIDI SysEx backend (not started) |
+| MADIface Pro | 🔵 Needs the MIDI SysEx backend (not started) |
+| Fireface UFX II / III | 🔵 Needs the MIDI SysEx backend (not started) |
+| Any ALSA-selem RME interface via `DeviceProfile` | 🟢 Possible today |
+
+🟡 in progress · 🟢 planned, reachable with the current architecture ·
+🔵 blocked on a separate, larger MIDI SysEx I/O backend that doesn't
+exist yet (these models don't expose ALSA controls at all).
+
+---
+
+## Release status
+
+TuxMix doesn't have a tagged release or a published AUR package yet. The
+`babyface.rs` ALSA control mapping was written from documentation and
+community knowledge, not verified against a physical Babyface Pro FS —
+the maintainer's own unit is expected in about a month, at which point the
+mapping gets reverse-engineered/verified properly against real hardware
+and the first release gets cut. Until then, `--mock` mode and
+building from source are the way to run and evaluate TuxMix.
 
 ---
 
@@ -176,12 +208,14 @@ Dependencies: `rustc`, `cargo`, `alsa-lib` (dev headers).
 
 ## Contributing
 
-TuxMix is in early development and contributions are welcome.
+TuxMix is in early development and contributions are welcome. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for the concrete recipe to add a new
+ALSA-selem device profile, plus:
 
-- **Rust / ALSA**: Help implement the real Babyface Pro FS ALSA controls
+- **Rust / ALSA**: Help verify the Babyface Pro FS ALSA control mapping against real hardware
 - **UI / UX**: Improve the iced GUI or ratatui TUI
-- **New hardware**: Add support for your RME interface (implement `RmeDevice`)
-- **USB reverse engineering**: Help discover the protocol for VU meters
+- **New hardware**: Add a `DeviceProfile` for your RME interface (ALSA-selem models only for now — see [Architecture](#architecture))
+- **MIDI SysEx**: Help design the I/O backend for UCX II/UFX+/III-class devices
 - **Testing**: Run `cargo test` and report issues
 
 See the [open issues](https://github.com/iswad-lab/tuxmix/issues) for starter tasks.

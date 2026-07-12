@@ -37,6 +37,15 @@ package() {
     install -Dm755 "target/release/tuxmix-tui" \
         "${pkgdir}/usr/bin/tuxmix-tui"
 
+    install -Dm644 "tuxmix-gui/assets/tuxmix.desktop" \
+        "${pkgdir}/usr/share/applications/tuxmix.desktop"
+    install -Dm644 "tuxmix-gui/assets/tuxmix.svg" \
+        "${pkgdir}/usr/share/icons/hicolor/scalable/apps/tuxmix.svg"
+    install -Dm644 "tuxmix-gui/assets/tuxmix-128.png" \
+        "${pkgdir}/usr/share/icons/hicolor/128x128/apps/tuxmix.png"
+    install -Dm644 "tuxmix-gui/assets/tuxmix-256.png" \
+        "${pkgdir}/usr/share/icons/hicolor/256x256/apps/tuxmix.png"
+
     install -Dm644 "README.md" \
         "${pkgdir}/usr/share/doc/tuxmix/README.md"
 }
