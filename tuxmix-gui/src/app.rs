@@ -1,3 +1,4 @@
+use iced::futures::channel::mpsc;
 use iced::keyboard::{self, Key};
 use iced::widget::{column, container, mouse_area, pick_list, row, scrollable, text};
 use iced::{mouse, window, Element, Length, Subscription, Task};
@@ -17,6 +18,7 @@ use tuxmix_core::{
 };
 
 use crate::matrix;
+use crate::osc::{self, OscCommand, OscConfig, OscOutbound};
 use crate::scenes::{list_scene_files, load_scene_file, save_scene_file};
 use crate::theme;
 use crate::widgets::fader;
@@ -233,6 +235,16 @@ pub enum Message {
     /// Plain click on genuinely empty page background clears the
     /// selection — see `page()`.
     ClearSelection,
+
+    /// The OSC worker (see `osc.rs`) just started — carries the sender
+    /// used to push outgoing feedback packets back out over UDP. Only
+    /// fires if `--osc` was passed; `state.osc_tx` stays `None` otherwise.
+    OscReady(mpsc::Sender<OscOutbound>),
+    /// A command decoded from an incoming OSC UDP packet — applied the
+    /// same way a GUI-originated change would be, then echoed back out so
+    /// a connected controller and the GUI stay in sync regardless of
+    /// which one actually moved a fader.
+    OscCommand(OscCommand),
 }
 
 // ── App state ────────────────────────────────────────────────────
@@ -286,6 +298,14 @@ pub struct TuxMix {
     /// Ctrl+scroll (zoom) event, so `Message::PageScrolled` has something
     /// to snap back to when it detects one. See that handler.
     pub scroll_offset: scrollable::AbsoluteOffset,
+    /// Port config for the OSC control surface — `None` unless `--osc` was
+    /// passed, in which case `subscription()` starts the worker.
+    pub osc_config: Option<OscConfig>,
+    /// Sender for outgoing OSC feedback packets, handed back by the worker
+    /// via `Message::OscReady` once it's actually bound and listening.
+    /// `None` until then (or always, if OSC isn't enabled) — `notify_osc`
+    /// is a no-op in that case.
+    pub osc_tx: Option<mpsc::Sender<OscOutbound>>,
 }
 
 /// Matches the `Tick` subscription interval below — the release curve is
@@ -356,7 +376,7 @@ impl MeterAnim {
     }
 }
 
-pub fn new(mock: bool) -> TuxMix {
+pub fn new(mock: bool, osc_config: Option<OscConfig>) -> TuxMix {
     let device = if mock {
         DeviceHandle::open_mock()
     } else {
@@ -387,6 +407,8 @@ pub fn new(mock: bool) -> TuxMix {
         selected: HashSet::new(),
         select_anchor: None,
         scroll_offset: scrollable::AbsoluteOffset::default(),
+        osc_config,
+        osc_tx: None,
     }
 }
 
@@ -452,9 +474,11 @@ fn apply_grouped_volume(state: &mut TuxMix, cid: ChannelId, out: usize, v: f32) 
             let cur = state.device.volume(sel, out).unwrap_or(0.0);
             let new_vol = db_to_vol(vol_to_db(cur) + delta_db).clamp(0.0, 1.0);
             let _ = state.device.set_volume(sel, out, new_vol);
+            notify_osc(state, OscOutbound::Volume(sel, out, new_vol));
         }
     } else {
         let _ = state.device.set_volume(cid, out, v);
+        notify_osc(state, OscOutbound::Volume(cid, out, v));
     }
 }
 
@@ -467,9 +491,21 @@ fn apply_grouped_pan(state: &mut TuxMix, cid: ChannelId, out: usize, pan: i8) {
             let cur = i16::from(state.device.pan(sel, out).unwrap_or(0));
             let new = (cur + delta).clamp(-100, 100) as i8;
             let _ = state.device.set_pan(sel, out, new);
+            notify_osc(state, OscOutbound::Pan(sel, out, new));
         }
     } else {
         let _ = state.device.set_pan(cid, out, pan);
+        notify_osc(state, OscOutbound::Pan(cid, out, pan));
+    }
+}
+
+/// Pushes a state change out to any connected OSC client — a no-op if
+/// `--osc` wasn't passed (`osc_tx` is `None`), and silently dropped rather
+/// than blocking the update loop if the outgoing channel is momentarily
+/// full (a lagging/absent UDP consumer should never stall the GUI).
+fn notify_osc(state: &mut TuxMix, msg: OscOutbound) {
+    if let Some(tx) = state.osc_tx.as_mut() {
+        let _ = tx.try_send(msg);
     }
 }
 
@@ -590,18 +626,22 @@ pub fn update(state: &mut TuxMix, message: Message) -> Task<Message> {
             if state.selected.len() > 1 && state.selected.contains(&cid) {
                 for sel in state.selected.clone() {
                     let _ = state.device.set_mute(sel, m);
+                    notify_osc(state, OscOutbound::Mute(sel, m));
                 }
             } else {
                 let _ = state.device.set_mute(cid, m);
+                notify_osc(state, OscOutbound::Mute(cid, m));
             }
         }
         Message::Solo(cid, s) => {
             if state.selected.len() > 1 && state.selected.contains(&cid) {
                 for sel in state.selected.clone() {
                     let _ = state.device.set_solo(sel, s);
+                    notify_osc(state, OscOutbound::Solo(sel, s));
                 }
             } else {
                 let _ = state.device.set_solo(cid, s);
+                notify_osc(state, OscOutbound::Solo(cid, s));
             }
         }
         Message::Phantom(idx, p) => {
@@ -631,9 +671,11 @@ pub fn update(state: &mut TuxMix, message: Message) -> Task<Message> {
                 // absolute value, unlike a drag which preserves balance.
                 for sel in state.selected.clone() {
                     let _ = state.device.set_volume(sel, out, default_vol);
+                    notify_osc(state, OscOutbound::Volume(sel, out, default_vol));
                 }
             } else {
                 let _ = state.device.set_volume(cid, out, default_vol);
+                notify_osc(state, OscOutbound::Volume(cid, out, default_vol));
             }
             if state.drag_range.is_some_and(|(dc, _, _)| dc == cid) {
                 state.drag_range = None;
@@ -646,9 +688,11 @@ pub fn update(state: &mut TuxMix, message: Message) -> Task<Message> {
             if state.selected.len() > 1 && state.selected.contains(&cid) {
                 for sel in state.selected.clone() {
                     let _ = state.device.set_pan(sel, out, 0);
+                    notify_osc(state, OscOutbound::Pan(sel, out, 0));
                 }
             } else {
                 let _ = state.device.set_pan(cid, out, 0);
+                notify_osc(state, OscOutbound::Pan(cid, out, 0));
             }
         }
         Message::ToggleCollapse(cid) => {
@@ -715,6 +759,52 @@ pub fn update(state: &mut TuxMix, message: Message) -> Task<Message> {
                 state.editing = None;
             }
         }
+        Message::OscReady(tx) => {
+            state.osc_tx = Some(tx);
+            // A controller connecting after startup shouldn't stay blind
+            // until the next manual change — snapshot everything once.
+            let n_out = state.device.output_pair_count();
+            for ch in state.device.inputs().to_vec() {
+                let cid = ChannelId::Input(ch.id);
+                for out in 0..n_out {
+                    notify_osc(state, OscOutbound::Volume(cid, out, ch.volumes[out]));
+                    notify_osc(state, OscOutbound::Pan(cid, out, ch.pans[out]));
+                }
+                notify_osc(state, OscOutbound::Mute(cid, ch.mute));
+                notify_osc(state, OscOutbound::Solo(cid, ch.solo));
+            }
+            for ch in state.device.playbacks().to_vec() {
+                let cid = ChannelId::Playback(ch.id);
+                for out in 0..n_out {
+                    notify_osc(state, OscOutbound::Volume(cid, out, ch.volumes[out]));
+                    notify_osc(state, OscOutbound::Pan(cid, out, ch.pans[out]));
+                }
+                notify_osc(state, OscOutbound::Mute(cid, ch.mute));
+                notify_osc(state, OscOutbound::Solo(cid, ch.solo));
+            }
+            for ch in state.device.outputs().to_vec() {
+                notify_osc(state, OscOutbound::OutputVolume(ch.id, ch.volume));
+                notify_osc(state, OscOutbound::Mute(ChannelId::Output(ch.id), ch.mute));
+                notify_osc(state, OscOutbound::Solo(ChannelId::Output(ch.id), ch.solo));
+            }
+        }
+        Message::OscCommand(cmd) => match cmd {
+            OscCommand::Volume(cid, out, v) => apply_grouped_volume(state, cid, out, v),
+            OscCommand::Pan(cid, out, p) => apply_grouped_pan(state, cid, out, p),
+            OscCommand::Mute(cid, m) => {
+                let _ = state.device.set_mute(cid, m);
+                notify_osc(state, OscOutbound::Mute(cid, m));
+            }
+            OscCommand::Solo(cid, s) => {
+                let _ = state.device.set_solo(cid, s);
+                notify_osc(state, OscOutbound::Solo(cid, s));
+            }
+            OscCommand::OutputVolume(id, v) => {
+                let cid = ChannelId::Output(id);
+                let _ = state.device.set_volume(cid, 0, v);
+                notify_osc(state, OscOutbound::OutputVolume(id, v));
+            }
+        },
     }
     Task::none()
 }
@@ -731,6 +821,10 @@ pub fn subscription(state: &TuxMix) -> Subscription<Message> {
     // then switches itself back off once `collapse_anim` empties out.
     if !state.collapse_anim.is_empty() {
         subs.push(iced::time::every(Duration::from_millis(8)).map(|_| Message::CollapseTick));
+    }
+    // Only running when `--osc` was passed — see `osc.rs`.
+    if let Some(config) = &state.osc_config {
+        subs.push(Subscription::run_with(*config, osc::worker));
     }
     Subscription::batch(subs)
 }
